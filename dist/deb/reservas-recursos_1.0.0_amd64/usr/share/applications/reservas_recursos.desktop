@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Reservas de Recursos
+Comment=Sistema de reservas de recursos
+Exec=/usr/bin/reservas_recursos
+Icon=reservas_recursos
+Terminal=false
+Categories=Office;Education;
+StartupNotify=true

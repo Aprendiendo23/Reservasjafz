@@ -11,17 +11,31 @@ class ReservaService {
   CollectionReference get reservasCollection =>
       _firestore.collection('reservas');
 
+  /// Solo cuenta como "mismo día" si hay [fechaUso] y coincide con [fecha] calendario.
+  /// Reservas antiguas sin `fechaUso` no deben bloquear fechas nuevas (antes el filtro
+  /// devolvía true para cualquier día y generaba falsos "ocupado").
+  bool _mismaFechaUsoQueSeleccion(Map<String, dynamic> data, DateTime fecha) {
+    final fechaUso = (data['fechaUso'] as Timestamp?)?.toDate();
+    if (fechaUso == null) {
+      return false;
+    }
+    final a = DateTime(fechaUso.year, fechaUso.month, fechaUso.day);
+    final b = DateTime(fecha.year, fecha.month, fecha.day);
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
   // Obtener todas las reservas (solo activas para usuarios normales)
   Stream<QuerySnapshot> getReservas({bool incluirEliminadas = false}) {
     if (incluirEliminadas) {
       // Admins pueden ver todas incluyendo eliminadas
       return reservasCollection.orderBy('creado', descending: true).snapshots();
     } else {
-      // Usuarios normales solo ven reservas activas (no eliminadas)
-      return reservasCollection
-          .where('eliminada', isEqualTo: false)
-          .orderBy('creado', descending: true)
-          .snapshots();
+      // IMPORTANTE:
+      // No filtrar por `eliminada == false` en la consulta porque:
+      // - reservas antiguas pueden no tener el campo `eliminada`
+      // - eso haría que en web aparezca vacío aunque existan reservas activas
+      // El filtrado se hace en memoria en los widgets (ej. `TablaReservas`).
+      return reservasCollection.orderBy('creado', descending: true).snapshots();
     }
   }
 
@@ -30,7 +44,6 @@ class ReservaService {
     print('🔍 Buscando reservas para usuarioID: $usuarioID');
     final stream = reservasCollection
         .where('usuarioID', isEqualTo: usuarioID)
-        .where('eliminada', isEqualTo: false)
         .orderBy('creado', descending: true)
         .snapshots();
     
@@ -157,12 +170,39 @@ class ReservaService {
       throw 'Usuario no autenticado';
     }
 
-    // Verificar disponibilidad con detalles antes de crear
-    final resultado = await verificarDisponibilidadConDetalles(
-      data['dia'] as String,
-      data['hora'] as String,
-      data['recursoID'] as String,
-    );
+    // Misma lógica que en crear_reserva.dart: al crear para otro docente, excluir su uid
+    // en la verificación (coherente con el flujo actual).
+    final docenteUsuarioIDPre = data['docenteUsuarioID'] as String?;
+    final String? excluirUsuarioID = (docenteUsuarioIDPre != null &&
+            docenteUsuarioIDPre.isNotEmpty)
+        ? docenteUsuarioIDPre
+        : user.uid;
+
+    // Preferir verificación por fecha calendario (evita que un lunes pasado bloquee otro lunes).
+    final dynamic fu = data['fechaUso'];
+    final Map<String, dynamic> resultado;
+    if (fu != null) {
+      final DateTime fechaUsoDt;
+      if (fu is Timestamp) {
+        fechaUsoDt = fu.toDate();
+      } else if (fu is DateTime) {
+        fechaUsoDt = fu;
+      } else {
+        throw 'fechaUso inválida';
+      }
+      resultado = await verificarDisponibilidadPorFechaConDetalles(
+        fechaUsoDt,
+        data['hora'] as String,
+        data['recursoID'] as String,
+        excluirUsuarioID: excluirUsuarioID,
+      );
+    } else {
+      resultado = await verificarDisponibilidadConDetalles(
+        data['dia'] as String,
+        data['hora'] as String,
+        data['recursoID'] as String,
+      );
+    }
 
     if (!resultado['disponible']) {
       final reservaOcupada = resultado['reservaOcupada'] as Map<String, dynamic>?;
@@ -178,18 +218,39 @@ class ReservaService {
     }
 
     // Agregar datos del usuario (solo si no existen)
-    data['usuarioID'] = user.uid; // Siempre usar el UID del usuario autenticado
+    // Si se proporciona docenteUsuarioID (cuando admin crea reserva para otro docente), usarlo
+    // De lo contrario, usar el UID del usuario autenticado
+    final docenteUsuarioID = docenteUsuarioIDPre;
+    if (docenteUsuarioID != null && docenteUsuarioID.isNotEmpty) {
+      data['usuarioID'] = docenteUsuarioID; // Usar el usuarioID del docente seleccionado
+      print('📝 Usando usuarioID del docente seleccionado: $docenteUsuarioID');
+    } else {
+      data['usuarioID'] = user.uid; // Usar el UID del usuario autenticado
+    }
+    // Eliminar docenteUsuarioID de los datos antes de guardar (solo era para pasar el usuarioID)
+    data.remove('docenteUsuarioID');
+    
     data['usuarioEmail'] = data['usuarioEmail'] ?? user.email ?? 'N/A';
-    // Preservar usuarioNombre si ya viene en los datos, sino usar el del usuario autenticado
-    data['usuarioNombre'] = data['usuarioNombre'] ?? user.displayName ?? user.email ?? 'Usuario';
+    // Preservar usuarioNombre si ya viene en los datos (debe ser el nombre del docente seleccionado)
+    // Si no viene, usar el campo 'docente' si existe, sino usar el del usuario autenticado
+    if (data['usuarioNombre'] == null || data['usuarioNombre'].toString().isEmpty) {
+      // Si hay un campo 'docente', usarlo como usuarioNombre
+      if (data['docente'] != null && data['docente'].toString().isNotEmpty) {
+        data['usuarioNombre'] = data['docente'];
+        print('📝 Usando campo "docente" como usuarioNombre: ${data['usuarioNombre']}');
+      } else {
+        data['usuarioNombre'] = user.displayName ?? user.email ?? 'Usuario';
+      }
+    }
     data['creado'] = FieldValue.serverTimestamp();
     data['estado'] = data['estado'] ?? 'activa';
     data['eliminada'] = false; // Por defecto no está eliminada (para auditoría)
 
     // Debug: imprimir datos antes de guardar
     print('📝 Creando reserva con datos:');
-    print('   - usuarioID: ${data['usuarioID']}');
+    print('   - usuarioID: ${data['usuarioID']} (${docenteUsuarioID != null ? "del docente seleccionado" : "del usuario autenticado"})');
     print('   - usuarioNombre: ${data['usuarioNombre']}');
+    print('   - docente: ${data['docente']}');
     print('   - recursoID: ${data['recursoID']}');
     print('   - recursoNombre: ${data['recursoNombre']}');
     print('   - dia: ${data['dia']}');
@@ -215,7 +276,7 @@ class ReservaService {
 
       await _notificacionService.notificarNuevaReserva(
         docenteNombre: data['usuarioNombre'] as String? ?? 'Docente',
-        docenteUsuarioID: user.uid, // ID del docente que creó la reserva
+        docenteUsuarioID: data['usuarioID'] as String? ?? user.uid, // ID del docente de la reserva (puede ser el seleccionado por admin)
         dia: data['dia'] as String? ?? '',
         hora: data['hora'] as String? ?? '',
         recursoNombre: data['recursoNombre'] as String? ?? '',
@@ -327,6 +388,80 @@ class ReservaService {
     await reservasCollection.doc(id).delete();
   }
 
+  /// Restaurar una reserva eliminada lógicamente (solo admin). Comprueba que el horario siga libre.
+  Future<void> recuperarReserva(String id) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw 'Usuario no autenticado';
+    }
+    if (!await esAdmin()) {
+      throw 'Solo los administradores pueden recuperar reservas.';
+    }
+
+    final docRef = reservasCollection.doc(id);
+    final doc = await docRef.get();
+    if (!doc.exists) {
+      throw 'Reserva no encontrada';
+    }
+
+    final data = doc.data() as Map<String, dynamic>;
+    if (data['eliminada'] != true) {
+      throw 'Esta reserva no está eliminada.';
+    }
+
+    final recursoID = data['recursoID'] as String? ?? '';
+    final hora = data['hora'] as String? ?? '';
+    if (recursoID.isEmpty || hora.isEmpty) {
+      throw 'Datos incompletos en la reserva (recurso u hora).';
+    }
+
+    final fu = data['fechaUso'];
+    if (fu != null) {
+      final DateTime fecha;
+      if (fu is Timestamp) {
+        fecha = fu.toDate();
+      } else if (fu is DateTime) {
+        fecha = fu;
+      } else {
+        throw 'fechaUso inválida';
+      }
+      final resultado = await verificarDisponibilidadPorFechaConDetalles(
+        fecha,
+        hora,
+        recursoID,
+      );
+      if (resultado['disponible'] != true) {
+        final ro = resultado['reservaOcupada'] as Map<String, dynamic>?;
+        final nombre = ro?['usuarioNombre'] ?? 'otra reserva';
+        throw 'No se puede recuperar: el horario ya está ocupado ($nombre).';
+      }
+    } else {
+      final dia = data['dia'] as String? ?? '';
+      final resultado = await verificarDisponibilidadConDetalles(
+        dia,
+        hora,
+        recursoID,
+      );
+      if (resultado['disponible'] != true) {
+        final ro = resultado['reservaOcupada'] as Map<String, dynamic>?;
+        final nombre = ro?['usuarioNombre'] ?? 'otra reserva';
+        throw 'No se puede recuperar: el horario ya está ocupado ($nombre).';
+      }
+    }
+
+    await docRef.update({
+      'eliminada': false,
+      'estado': 'activa',
+      'fechaRecuperacion': FieldValue.serverTimestamp(),
+      'usuarioRecuperacionID': user.uid,
+      'fechaEliminacion': FieldValue.delete(),
+      'usuarioEliminacionID': FieldValue.delete(),
+      'usuarioEliminacionNombre': FieldValue.delete(),
+      'eliminadoPorAdmin': FieldValue.delete(),
+      'actualizado': FieldValue.serverTimestamp(),
+    });
+  }
+
   // Obtener reservas por día (solo activas)
   Stream<QuerySnapshot> getReservasPorDia(String dia) {
     return reservasCollection
@@ -421,10 +556,6 @@ class ReservaService {
     try {
       final reservasDelDia = await getReservasPorFecha(fecha);
       
-      // Preparar rango de fechas para filtrar
-      final inicioDia = DateTime(fecha.year, fecha.month, fecha.day);
-      final finDia = DateTime(fecha.year, fecha.month, fecha.day, 23, 59, 59);
-      
       // Filtrar en memoria: solo reservas no eliminadas del recurso específico y del día correcto
       final reservasDelRecurso = reservasDelDia.docs.where((doc) {
         final data = doc.data() as Map<String, dynamic>;
@@ -455,19 +586,8 @@ class ReservaService {
           return false;
         }
         
-        // Verificar que la fecha coincida
-        final fechaUso = (data['fechaUso'] as Timestamp?)?.toDate();
-        if (fechaUso != null) {
-          final fechaUsoDia = DateTime(fechaUso.year, fechaUso.month, fechaUso.day);
-          final inicioDiaComparar = DateTime(inicioDia.year, inicioDia.month, inicioDia.day);
-          final finDiaComparar = DateTime(finDia.year, finDia.month, finDia.day);
-          
-          // Verificar si la fecha está en el mismo día
-          if (fechaUsoDia.year != inicioDiaComparar.year ||
-              fechaUsoDia.month != inicioDiaComparar.month ||
-              fechaUsoDia.day != inicioDiaComparar.day) {
-            return false;
-          }
+        if (!_mismaFechaUsoQueSeleccion(data, fecha)) {
+          return false;
         }
         
         return true;
@@ -539,10 +659,6 @@ class ReservaService {
     try {
       final reservasDelDia = await getReservasPorFecha(fecha);
       
-      // Preparar rango de fechas para filtrar
-      final inicioDia = DateTime(fecha.year, fecha.month, fecha.day);
-      final finDia = DateTime(fecha.year, fecha.month, fecha.day, 23, 59, 59);
-      
       // Todas las horas y bloques posibles
       final todasLasHoras = [
         '1ª Hora',
@@ -566,18 +682,8 @@ class ReservaService {
         // Verificar que no esté eliminada
         if (data['eliminada'] == true) return false;
         
-        // Verificar que la fecha coincida
-        final fechaUso = (data['fechaUso'] as Timestamp?)?.toDate();
-        if (fechaUso != null) {
-          final fechaUsoDia = DateTime(fechaUso.year, fechaUso.month, fechaUso.day);
-          final inicioDiaComparar = DateTime(inicioDia.year, inicioDia.month, inicioDia.day);
-          
-          // Verificar si la fecha está en el mismo día
-          if (fechaUsoDia.year != inicioDiaComparar.year ||
-              fechaUsoDia.month != inicioDiaComparar.month ||
-              fechaUsoDia.day != inicioDiaComparar.day) {
-            return false;
-          }
+        if (!_mismaFechaUsoQueSeleccion(data, fecha)) {
+          return false;
         }
         
         return true;

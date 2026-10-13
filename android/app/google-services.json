@@ -1,0 +1,77 @@
+{
+  "project_info": {
+    "project_number": "353355509945",
+    "project_id": "recursostic-18bb8",
+    "storage_bucket": "recursostic-18bb8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:353355509945:android:4de77525a432b731682b68",
+        "android_client_info": {
+          "package_name": "com.recursostic.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "353355509945-69e4mrepggs392n7ahojmemtehqitjme.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.recursostic.app",
+            "certificate_hash": "b89cb06a6fe425517c3c69bc445782b6086a8756"
+          }
+        },
+        {
+          "client_id": "353355509945-6q2vonrjcosna6nqm92mi2t4sqaabekb.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCnZ42nbyZLLNLk097L71P4P9EZs491EAg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "353355509945-6q2vonrjcosna6nqm92mi2t4sqaabekb.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:353355509945:android:451a5b2afeac8576682b68",
+        "android_client_info": {
+          "package_name": "com.reservasrecursos.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "353355509945-6q2vonrjcosna6nqm92mi2t4sqaabekb.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCnZ42nbyZLLNLk097L71P4P9EZs491EAg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "353355509945-6q2vonrjcosna6nqm92mi2t4sqaabekb.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
+

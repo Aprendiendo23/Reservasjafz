@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart' show FirebaseException;
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter/foundation.dart';
 import 'fcm_service.dart';
@@ -68,37 +69,76 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  bool _esErrorFirestoreOffline(Object e) {
+    if (e is FirebaseException) {
+      final code = e.code.toLowerCase();
+      return code == 'unavailable' || code == 'network-request-failed';
+    }
+    final msg = e.toString().toLowerCase();
+    return msg.contains('client is offline') ||
+        msg.contains('cloud_firestore/unavailable') ||
+        msg.contains('unavailable');
+  }
+
+  String _mensajeSinConexion() {
+    return 'Sin conexión a Internet. Revisa tu red y vuelve a intentar.';
+  }
+
   // Verificar si el usuario es administrador (nueva estructura con usuarios/rol)
   Future<void> _checkAdminStatus(String uid) async {
     try {
-      final doc = await _firestore.collection('usuarios').doc(uid).get();
-      if (doc.exists) {
-        final data = doc.data() as Map<String, dynamic>?;
-        final nuevoEstadoAdmin = data?['rol'] == 'admin';
-        // Solo actualizar si el estado cambió para evitar notificaciones innecesarias
-        if (_isAdmin != nuevoEstadoAdmin) {
-          _isAdmin = nuevoEstadoAdmin;
-          notifyListeners();
-        } else {
-          _isAdmin = nuevoEstadoAdmin;
-        }
+      final usuariosRef = _firestore.collection('usuarios');
+      final docUid = await usuariosRef.doc(uid).get();
+
+      Map<String, dynamic>? data;
+      String? rol;
+
+      if (docUid.exists) {
+        data = docUid.data() as Map<String, dynamic>?;
+        rol = data?['rol'] as String?;
       } else {
-        // Si el usuario no existe en usuarios, crearlo como docente
-        if (_user != null) {
-          await _firestore.collection('usuarios').doc(uid).set({
+        // Compatibilidad: en instalaciones antiguas, el doc de usuario puede NO tener id = uid.
+        // Si tenemos email, buscamos el documento por email y migramos/copiamo al uid.
+        final email = _user?.email;
+        if (email != null && email.isNotEmpty) {
+          final query = await usuariosRef.where('email', isEqualTo: email).limit(1).get();
+          if (query.docs.isNotEmpty) {
+            final docByEmail = query.docs.first;
+            final dataByEmail = docByEmail.data();
+            rol = (dataByEmail['rol'] as String?) ?? 'docente';
+
+            // Copiar/migrar al doc por uid para unificar la estructura.
+            await usuariosRef.doc(uid).set({
+              ...dataByEmail,
+              'email': email,
+              'rol': rol,
+              'migradoDesdeId': docByEmail.id,
+              'actualizado': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+
+            data = dataByEmail;
+          }
+        }
+
+        // Si aún no existe, crearlo (rol por defecto docente).
+        if (data == null && _user != null) {
+          rol = 'docente';
+          await usuariosRef.doc(uid).set({
             'nombre': _user!.displayName ?? _user!.email ?? 'Usuario',
             'email': _user!.email ?? '',
-            'rol': 'docente',
+            'rol': rol,
             'foto': _user!.photoURL ?? '',
             'creado': FieldValue.serverTimestamp(),
-          });
+          }, SetOptions(merge: true));
         }
-        if (_isAdmin != false) {
-          _isAdmin = false;
-          notifyListeners();
-        } else {
-          _isAdmin = false;
-        }
+      }
+
+      final nuevoEstadoAdmin = (rol ?? 'docente') == 'admin';
+      if (_isAdmin != nuevoEstadoAdmin) {
+        _isAdmin = nuevoEstadoAdmin;
+        notifyListeners();
+      } else {
+        _isAdmin = nuevoEstadoAdmin;
       }
     } catch (e) {
       print('Error en _checkAdminStatus: $e');
@@ -173,7 +213,17 @@ class AuthService extends ChangeNotifier {
       String email = username;
       
       // Primero intentar buscar el usuario en Firestore por username
-      final usuarioData = await buscarUsuarioPorUsername(username);
+      Map<String, dynamic>? usuarioData;
+      try {
+        usuarioData = await buscarUsuarioPorUsername(username);
+      } catch (e) {
+        // Si no hay conexión a Firestore y el usuario NO es un email, no podemos resolver el username
+        if (_esErrorFirestoreOffline(e) && !username.contains('@')) {
+          throw '${_mensajeSinConexion()}\n\nTip: Si tu usuario es un correo, escríbelo completo (ej: usuario@dominio.com).';
+        }
+        // Si el username es un email, continuamos con autenticación directa
+        usuarioData = null;
+      }
       
       // Si se encuentra en Firestore, usar ese email
       if (usuarioData != null && usuarioData['email'] != null) {
@@ -197,40 +247,52 @@ class AuthService extends ChangeNotifier {
       // Después de autenticarse exitosamente, asegurar que existe en Firestore
       if (credential.user != null) {
         final user = credential.user!;
-        final userDoc = await _firestore.collection('usuarios').doc(user.uid).get();
-        
-        if (!userDoc.exists) {
-          // Si no existe en Firestore, crearlo
-          // Determinar el rol: admin si el email contiene "admin" o es admin@gmail.com, docente para los demás
-          final emailLower = email.toLowerCase();
-          final rol = (emailLower == 'admin@gmail.com' || 
-                      emailLower.contains('admin@') ||
-                      emailLower.startsWith('admin')) 
-                      ? 'admin' : 'docente';
-          
-          // Extraer nombre del email (parte antes del @)
-          final nombre = user.displayName ?? 
-                        email.split('@')[0].replaceAll('_', ' ').replaceAll('.', ' ');
-          
-          await _firestore.collection('usuarios').doc(user.uid).set({
-            'nombre': nombre,
-            'email': email,
-            'usuario': email, // Usar el email como usuario también
-            'rol': rol,
-            'foto': user.photoURL ?? '',
-            'creado': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
-        } else {
-          // Si existe, actualizar el campo 'usuario' si no está presente
-          final data = userDoc.data() as Map<String, dynamic>?;
-          if (data != null && !data.containsKey('usuario')) {
-            await _firestore.collection('usuarios').doc(user.uid).update({
+        try {
+          final userDoc = await _firestore.collection('usuarios').doc(user.uid).get();
+          if (!userDoc.exists) {
+            // Si no existe en Firestore, crearlo
+            final emailLower = email.toLowerCase();
+            final rolFromLookup = (usuarioData?['rol'] as String?)?.trim();
+            final rol = (rolFromLookup != null && rolFromLookup.isNotEmpty)
+                ? rolFromLookup
+                : ((emailLower == 'admin@gmail.com' ||
+                        emailLower.contains('admin@') ||
+                        emailLower.startsWith('admin'))
+                    ? 'admin'
+                    : 'docente');
+
+            final nombreFromLookup = (usuarioData?['nombre'] as String?)?.trim();
+            final nombre = (nombreFromLookup != null && nombreFromLookup.isNotEmpty)
+                ? nombreFromLookup
+                : (user.displayName ??
+                    email.split('@')[0].replaceAll('_', ' ').replaceAll('.', ' '));
+
+            await _firestore.collection('usuarios').doc(user.uid).set({
+              'nombre': nombre,
+              'email': email,
               'usuario': email,
-            });
+              'rol': rol,
+              'foto': user.photoURL ?? '',
+              'creado': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+          } else {
+            final data = userDoc.data() as Map<String, dynamic>?;
+            if (data != null && !data.containsKey('usuario')) {
+              await _firestore.collection('usuarios').doc(user.uid).update({
+                'usuario': email,
+              });
+            }
+          }
+        } catch (e) {
+          if (_esErrorFirestoreOffline(e)) {
+            // No bloquear el login si Firestore no está disponible
+            print('⚠️ Firestore sin conexión al asegurar perfil (login). Continuando...');
+          } else {
+            rethrow;
           }
         }
-        
-        // Verificar estado de admin después del login
+
+        // Verificar estado de admin después del login (este método ya maneja errores internamente)
         await _checkAdminStatus(user.uid);
       }
       
@@ -240,6 +302,9 @@ class AuthService extends ChangeNotifier {
     } catch (e) {
       if (e.toString().contains('Usuario no encontrado')) {
         throw 'Usuario no encontrado';
+      }
+      if (_esErrorFirestoreOffline(e)) {
+        throw _mensajeSinConexion();
       }
       throw 'Error inesperado: $e';
     }
@@ -256,15 +321,44 @@ class AuthService extends ChangeNotifier {
         password: password,
       );
       
-      // Verificar estado de admin después del login
+      // Asegurar que el usuario existe en Firestore después del login
       if (credential.user != null) {
-        await _checkAdminStatus(credential.user!.uid);
+        final user = credential.user!;
+        try {
+          final userDoc = await _firestore.collection('usuarios').doc(user.uid).get();
+          if (!userDoc.exists) {
+            print('⚠️ Usuario no existe en Firestore, creándolo automáticamente...');
+            await _firestore.collection('usuarios').doc(user.uid).set({
+              'nombre': user.displayName ??
+                  email.split('@')[0].replaceAll('_', ' ').replaceAll('.', ' '),
+              'email': email,
+              'usuario': email,
+              'rol': 'docente',
+              'foto': user.photoURL ?? '',
+              'creado': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+            print('✅ Usuario creado automáticamente en Firestore: ${user.uid}');
+          }
+        } catch (e) {
+          if (_esErrorFirestoreOffline(e)) {
+            // No bloquear el login si Firestore no está disponible
+            print('⚠️ Firestore sin conexión al crear/verificar perfil (login). Continuando...');
+          } else {
+            rethrow;
+          }
+        }
+
+        // Verificar estado de admin después del login (maneja errores internamente)
+        await _checkAdminStatus(user.uid);
       }
       
       return credential;
     } on FirebaseAuthException catch (e) {
       throw _handleAuthException(e);
     } catch (e) {
+      if (_esErrorFirestoreOffline(e)) {
+        throw _mensajeSinConexion();
+      }
       throw 'Error inesperado: $e';
     }
   }
@@ -287,9 +381,36 @@ class AuthService extends ChangeNotifier {
         password: password,
       );
 
-      // Verificar nuevamente después del login
+      // Asegurar que el usuario existe en Firestore después del login
       if (credential.user != null) {
-        await _checkAdminStatus(credential.user!.uid);
+        final user = credential.user!;
+        try {
+          final userDoc = await _firestore.collection('usuarios').doc(user.uid).get();
+          if (!userDoc.exists) {
+            print('⚠️ Admin no existe en Firestore, creándolo automáticamente...');
+            await _firestore.collection('usuarios').doc(user.uid).set({
+              'nombre': user.displayName ??
+                  email.split('@')[0].replaceAll('_', ' ').replaceAll('.', ' '),
+              'email': email,
+              'usuario': email,
+              'rol': 'admin',
+              'foto': user.photoURL ?? '',
+              'creado': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+
+            print('✅ Admin creado automáticamente en Firestore: ${user.uid}');
+          }
+        } catch (e) {
+          if (_esErrorFirestoreOffline(e)) {
+            // Para admin, sin Firestore no podemos verificar permisos de forma fiable
+            await _auth.signOut();
+            throw _mensajeSinConexion();
+          }
+          rethrow;
+        }
+        
+        // Verificar nuevamente después del login
+        await _checkAdminStatus(user.uid);
         if (!_isAdmin) {
           await _auth.signOut();
           throw 'No tienes permisos de administrador';
@@ -300,6 +421,9 @@ class AuthService extends ChangeNotifier {
     } on FirebaseAuthException catch (e) {
       throw _handleAuthException(e);
     } catch (e) {
+      if (_esErrorFirestoreOffline(e)) {
+        throw _mensajeSinConexion();
+      }
       throw e.toString();
     }
   }
@@ -491,15 +615,30 @@ class AuthService extends ChangeNotifier {
         password: password,
       );
       
-      // Crear usuario en Firestore
+      // Crear usuario en Firestore con todos los campos necesarios
       if (credential.user != null) {
-        await _firestore.collection('usuarios').doc(credential.user!.uid).set({
+        final userData = {
           'nombre': nombre,
           'email': email,
+          'usuario': email, // Usar el email como usuario también
           'rol': rol,
           'foto': '',
           'creado': FieldValue.serverTimestamp(),
-        });
+        };
+        
+        // Usar set con merge: true para asegurar que se cree correctamente
+        await _firestore.collection('usuarios').doc(credential.user!.uid).set(
+          userData,
+          SetOptions(merge: true),
+        );
+        
+        // Verificar que se creó correctamente
+        final docVerificado = await _firestore.collection('usuarios').doc(credential.user!.uid).get();
+        if (!docVerificado.exists) {
+          throw 'Error: No se pudo crear el documento del usuario en Firestore';
+        }
+        
+        print('✅ Usuario creado en Firestore: ${credential.user!.uid} con rol: $rol');
       }
       
       // Cerrar sesión del nuevo usuario creado
@@ -542,11 +681,16 @@ class AuthService extends ChangeNotifier {
       case 'email-already-in-use':
         return 'Este email ya está registrado';
       case 'user-not-found':
-        return 'Usuario no encontrado';
+        // No revelamos si el fallo es por usuario o contraseña para mayor seguridad
+        return 'Correo o contraseña incorrectos. Revisa tus datos e inténtalo de nuevo.';
       case 'wrong-password':
-        return 'Contraseña incorrecta';
+        return 'Correo o contraseña incorrectos. Revisa tus datos e inténtalo de nuevo.';
       case 'invalid-email':
-        return 'Email inválido';
+        return 'El correo no es válido. Revisa que tenga el formato correcto, por ejemplo usuario@dominio.com';
+      case 'invalid-credential':
+        // Mensaje genérico que suele mostrarse como:
+        // "The supplied auth credential is incorrect, malformed or has expired."
+        return 'Correo o contraseña incorrectos. Revisa tus datos e inténtalo de nuevo.';
       case 'user-disabled':
         return 'Usuario deshabilitado';
       case 'too-many-requests':

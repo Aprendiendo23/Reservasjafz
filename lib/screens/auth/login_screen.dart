@@ -58,11 +58,36 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString()),
-            backgroundColor: Colors.red,
-          ),
+        String errorMessage = e.toString();
+        final lower = errorMessage.toLowerCase();
+        if (lower.contains('client is offline') ||
+            lower.contains('cloud_firestore/unavailable') ||
+            lower.contains('[cloud_firestore/unavailable]') ||
+            lower.contains('unavailable') ||
+            lower.contains('offline') ||
+            lower.contains('network') ||
+            lower.contains('connection') ||
+            lower.contains('internet')) {
+          errorMessage =
+              'Sin conexión a Internet. Revisa tu red y vuelve a intentar.';
+        }
+
+        await showDialog<void>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text('Error de autenticación'),
+              content: Text(
+                errorMessage,
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Aceptar'),
+                ),
+              ],
+            );
+          },
         );
       }
     } finally {
@@ -90,11 +115,36 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString()),
-            backgroundColor: Colors.red,
-          ),
+        String errorMessage = e.toString();
+        final lower = errorMessage.toLowerCase();
+        if (lower.contains('client is offline') ||
+            lower.contains('cloud_firestore/unavailable') ||
+            lower.contains('[cloud_firestore/unavailable]') ||
+            lower.contains('unavailable') ||
+            lower.contains('offline') ||
+            lower.contains('network') ||
+            lower.contains('connection') ||
+            lower.contains('internet')) {
+          errorMessage =
+              'Sin conexión a Internet. Revisa tu red y vuelve a intentar.';
+        }
+
+        await showDialog<void>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text('Error al iniciar sesión con Google'),
+              content: Text(
+                errorMessage,
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Aceptar'),
+                ),
+              ],
+            );
+          },
         );
       }
     } finally {
@@ -130,22 +180,42 @@ class _LoginScreenState extends State<LoginScreen> {
       await authService.resetPassword(_emailController.text.trim());
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Se ha enviado un email para recuperar tu contraseña',
-            ),
-            backgroundColor: Colors.green,
-          ),
+        await showDialog<void>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text('Correo enviado'),
+              content: const Text(
+                'Se ha enviado un email para recuperar tu contraseña.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Aceptar'),
+                ),
+              ],
+            );
+          },
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString()),
-            backgroundColor: Colors.red,
-          ),
+        await showDialog<void>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text('Error al recuperar contraseña'),
+              content: Text(
+                e.toString(),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Aceptar'),
+                ),
+              ],
+            );
+          },
         );
       }
     }

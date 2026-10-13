@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../services/auth_service.dart';
 import '../../services/recurso_service.dart';
 import '../../services/reserva_service.dart';
@@ -107,12 +108,16 @@ class AdminHomeScreen extends StatelessWidget {
               'Total Reservas',
               Icons.book_online,
               Colors.orange,
-              FutureBuilder<int>(
-                future: reservaService.contarReservas(),
+              StreamBuilder<QuerySnapshot>(
+                stream: reservaService.getReservas(incluirEliminadas: false),
                 builder: (context, snapshot) {
                   if (snapshot.hasData) {
+                    final totalActivas = snapshot.data!.docs.where((doc) {
+                      final data = doc.data() as Map<String, dynamic>;
+                      return data['eliminada'] != true;
+                    }).length;
                     return Text(
-                      '${snapshot.data}',
+                      '$totalActivas',
                       style: const TextStyle(
                         fontSize: 32,
                         fontWeight: FontWeight.bold,

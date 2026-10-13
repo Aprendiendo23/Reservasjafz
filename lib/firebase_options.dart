@@ -29,10 +29,7 @@ class DefaultFirebaseOptions {
       case TargetPlatform.windows:
         return windows;
       case TargetPlatform.linux:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for linux - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return linux;
       default:
         throw UnsupportedError(
           'DefaultFirebaseOptions are not supported for this platform.',
@@ -76,6 +73,17 @@ class DefaultFirebaseOptions {
   );
 
   static const FirebaseOptions windows = FirebaseOptions(
+    apiKey: 'AIzaSyCnZ42nbyZLLNLk097L71P4P9EZs491EAg',
+    appId: '1:353355509945:web:4de77525a432b731682b68',
+    messagingSenderId: '353355509945',
+    projectId: 'recursostic-18bb8',
+    authDomain: 'recursostic-18bb8.firebaseapp.com',
+    storageBucket: 'recursostic-18bb8.firebasestorage.app',
+  );
+
+  // Para Linux de escritorio usamos la misma configuración que web/windows,
+  // ya que comparten el mismo proyecto Firebase.
+  static const FirebaseOptions linux = FirebaseOptions(
     apiKey: 'AIzaSyCnZ42nbyZLLNLk097L71P4P9EZs491EAg',
     appId: '1:353355509945:web:4de77525a432b731682b68',
     messagingSenderId: '353355509945',

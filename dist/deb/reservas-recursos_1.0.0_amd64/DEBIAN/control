@@ -1,0 +1,9 @@
+Package: reservas-recursos
+Version: 1.0.0
+Section: misc
+Priority: optional
+Architecture: amd64
+Maintainer: Antonio <antonio@example.com>
+Depends: libgtk-3-0, libstdc++6, libglib2.0-0, libc6
+Description: Reservas de Recursos (Flutter Desktop)
+ Aplicacion de escritorio para gestionar reservas de recursos.

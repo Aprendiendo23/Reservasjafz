@@ -85,14 +85,22 @@ class _LoginMainScreenState extends State<LoginMainScreen> {
       // Si llegamos aquí, Firebase está inicializado
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'No se puede conectar a Firebase. Por favor verifica tu conexión a internet.',
-            ),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 5),
-          ),
+        await showDialog<void>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text('Error de conexión'),
+              content: const Text(
+                'No se puede conectar a Firebase. Por favor verifica tu conexión a internet.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Aceptar'),
+                ),
+              ],
+            );
+          },
         );
       }
       return;
@@ -129,27 +137,45 @@ class _LoginMainScreenState extends State<LoginMainScreen> {
     } catch (e) {
       if (mounted) {
         String errorMessage = e.toString();
-        
-        // Limpiar el mensaje de error
-        if (errorMessage.contains('Usuario no encontrado')) {
-          errorMessage = 'Usuario no encontrado';
-        } else if (errorMessage.contains('wrong-password') || errorMessage.contains('Contraseña incorrecta')) {
-          errorMessage = 'Contraseña incorrecta';
-        } else if (errorMessage.contains('network') || 
+
+        // Normalizar mensajes de error comunes
+        if (errorMessage.contains('Usuario no encontrado') ||
+            errorMessage.contains('user-not-found') ||
+            errorMessage.contains('wrong-password') ||
+            errorMessage.contains('Contraseña incorrecta') ||
+            errorMessage.contains('Correo o contraseña incorrectos') ||
+            errorMessage.contains('invalid-credential')) {
+          errorMessage =
+              'Correo o contraseña incorrectos. Revisa tus datos e inténtalo de nuevo.';
+        } else if (errorMessage.toLowerCase().contains('client is offline') ||
+            errorMessage.toLowerCase().contains('cloud_firestore/unavailable') ||
+            errorMessage.toLowerCase().contains('[cloud_firestore/unavailable]') ||
+            errorMessage.toLowerCase().contains('unavailable') ||
+            errorMessage.toLowerCase().contains('offline')) {
+          errorMessage =
+              'Sin conexión a Internet. Revisa tu red y vuelve a intentar.';
+        } else if (errorMessage.contains('network') ||
             errorMessage.contains('connection') ||
             errorMessage.contains('internet') ||
             errorMessage.contains('Firebase')) {
-          errorMessage = 'No se puede conectar a Firebase. Por favor verifica tu conexión a internet.';
-        } else if (errorMessage.contains('user-not-found')) {
-          errorMessage = 'Usuario no encontrado';
+          errorMessage =
+              'No se puede conectar a Firebase. Por favor verifica tu conexión a internet.';
         }
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(errorMessage),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 5),
-          ),
+
+        await showDialog<void>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text('Error de autenticación'),
+              content: Text(errorMessage),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Aceptar'),
+                ),
+              ],
+            );
+          },
         );
       }
     } finally {

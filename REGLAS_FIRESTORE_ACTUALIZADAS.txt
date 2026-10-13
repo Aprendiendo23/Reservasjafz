@@ -1,0 +1,129 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================
+    // FUNCIONES AUXILIARES
+    // ============================================
+    
+    // Verificar si el usuario está autenticado
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Verificar si el usuario existe en la colección usuarios
+    function userExists() {
+      return exists(/databases/$(database)/documents/usuarios/$(request.auth.uid));
+    }
+    
+    // Obtener el rol del usuario actual (solo si existe)
+    function getUserRole() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol;
+    }
+    
+    // Verificar si el usuario es ADMINISTRADOR
+    function isAdmin() {
+      return isAuthenticated() && 
+             userExists() &&
+             getUserRole() == 'admin';
+    }
+    
+    // Verificar si el usuario es DOCENTE
+    function isDocente() {
+      return isAuthenticated() && 
+             (userExists() && getUserRole() == 'docente');
+    }
+    
+    // Verificar si el usuario es el propietario del documento
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // ============================================
+    // COLECCIÓN: usuarios
+    // ============================================
+    match /usuarios/{userId} {
+      // LECTURA:
+      // - Cualquier usuario autenticado puede leer cualquier usuario
+      allow read: if isAuthenticated();
+      
+      // CREACIÓN:
+      // - Cualquier usuario autenticado puede crear su propio documento cuando se registra
+      // - Admins pueden crear cualquier documento de usuario
+      // - Permite crear incluso si el usuario no existe aún (para registro inicial)
+      allow create: if isAuthenticated() && 
+                       (isOwner(userId) || isAdmin() || !userExists());
+      
+      // ACTUALIZACIÓN:
+      // - Docentes: Solo pueden actualizar su propio documento (perfil)
+      // - Admins: Pueden actualizar cualquier documento de usuario
+      allow update: if isAuthenticated() && 
+                       (isOwner(userId) || isAdmin() || !userExists());
+      
+      // ELIMINACIÓN:
+      // - Solo admins pueden eliminar usuarios
+      allow delete: if isAdmin();
+    }
+    
+    // ============================================
+    // COLECCIÓN: recursos
+    // ============================================
+    match /recursos/{recursoId} {
+      // LECTURA:
+      // - Cualquier usuario autenticado puede leer recursos
+      //   (permite que docentes vean disponibilidad incluso si su documento aún no existe)
+      allow read: if isAuthenticated();
+      
+      // CREACIÓN, ACTUALIZACIÓN, ELIMINACIÓN:
+      // - Solo admins pueden gestionar recursos (CRUD completo)
+      allow create, update, delete: if isAdmin();
+    }
+    
+    // ============================================
+    // COLECCIÓN: reservas
+    // ============================================
+    match /reservas/{reservaId} {
+      // LECTURA:
+      // - Admins: Pueden leer TODAS las reservas
+      // - Docentes: Solo pueden leer sus propias reservas
+      // - Permitir lectura si el usuario es el propietario (incluso si no existe en usuarios)
+      allow read: if isAuthenticated() && 
+                     (isAdmin() || 
+                      request.auth.uid == resource.data.usuarioID ||
+                      request.auth.uid == resource.data.usuarioId);
+      
+      // CREACIÓN:
+      // - Cualquier usuario autenticado puede crear reservas propias
+      //   (verifica que el usuarioID/usuarioId coincida con el usuario autenticado)
+      // - Permite crear incluso si el usuario no existe en la colección usuarios
+      allow create: if isAuthenticated() && 
+                       (request.resource.data.usuarioID == request.auth.uid ||
+                        request.resource.data.usuarioId == request.auth.uid ||
+                        isAdmin());
+      
+      // ACTUALIZACIÓN:
+      // - Docentes: Solo pueden actualizar sus propias reservas
+      // - Admins: Pueden actualizar CUALQUIER reserva
+      allow update: if isAuthenticated() && 
+                       (isAdmin() || 
+                        request.auth.uid == resource.data.usuarioID ||
+                        request.auth.uid == resource.data.usuarioId);
+      
+      // ELIMINACIÓN:
+      // - Docentes: Solo pueden eliminar sus propias reservas
+      // - Admins: Pueden eliminar CUALQUIER reserva
+      allow delete: if isAuthenticated() && 
+                       (isAdmin() || 
+                        request.auth.uid == resource.data.usuarioID ||
+                        request.auth.uid == resource.data.usuarioId);
+    }
+    
+    // ============================================
+    // REGLA POR DEFECTO: Denegar todo lo demás
+    // ============================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+

@@ -350,10 +350,21 @@ class ExportService {
 
       // Agregar información del período si está disponible
       if (periodoInfo != null && periodoInfo.isNotEmpty) {
-        sheet.appendRow([TextCellValue('Período: $periodoInfo')]);
+        String periodoLegible = periodoInfo;
         if (fechaInicio != null && fechaFin != null) {
-          sheet.appendRow([TextCellValue('${dateFormat.format(fechaInicio)} - ${dateFormat.format(fechaFin)}')]);
+          periodoLegible = _formatearPeriodoLegible(periodoInfo, fechaInicio, fechaFin);
         }
+
+        sheet.appendRow([TextCellValue('Período: $periodoLegible')]);
+
+        if (fechaInicio != null && fechaFin != null) {
+          sheet.appendRow([
+            TextCellValue(
+              '${dateFormat.format(fechaInicio)} - ${dateFormat.format(fechaFin)}',
+            ),
+          ]);
+        }
+
         sheet.appendRow([]); // Línea en blanco
       }
 
@@ -419,6 +430,9 @@ class ExportService {
         _agregarEstadisticasMaestrosExcel(excel, reservasFiltradas);
       }
 
+      // Ajustar ancho de columnas al contenido (hoja principal)
+      _autoFitColumns(sheet, headers.length);
+
       // Generar bytes del archivo Excel
       final bytesList = excel.encode()!;
       final bytes = Uint8List.fromList(bytesList);
@@ -482,23 +496,19 @@ class ExportService {
       
       // Agregar información del período si está disponible
       if (periodoInfo != null && periodoInfo.isNotEmpty) {
-        // Formatear período de manera legible
         String periodoLegible = periodoInfo;
         if (fechaInicio != null && fechaFin != null) {
-          final mesNombre = DateFormat('MMMM', 'es_ES').format(fechaInicio!);
-          if (periodoInfo.contains('-')) {
-            // Es semana: "05-09_01_2025" -> "05-09 de Enero 2025"
-            final partes = periodoInfo.split('_');
-            periodoLegible = '${partes[0]} de $mesNombre ${fechaInicio!.year}';
-          } else {
-            // Es mes: "01_2025" -> "Enero 2025"
-            periodoLegible = '$mesNombre ${fechaInicio!.year}';
-          }
+          periodoLegible = _formatearPeriodoLegible(periodoInfo, fechaInicio, fechaFin);
         }
+
         buffer.writeln('Período: $periodoLegible');
+
         if (fechaInicio != null && fechaFin != null) {
-          buffer.writeln('${dateFormat.format(fechaInicio)} - ${dateFormat.format(fechaFin)}');
+          buffer.writeln(
+            '${dateFormat.format(fechaInicio)} - ${dateFormat.format(fechaFin)}',
+          );
         }
+
         buffer.writeln(''); // Línea en blanco
       }
       
@@ -883,6 +893,9 @@ class ExportService {
         _agregarEstadisticasMaestrosExcel(excel, reservas);
       }
 
+      // Ajustar ancho de columnas al contenido (hoja principal)
+      _autoFitColumns(sheet, headers.length);
+
       // Generar bytes del archivo Excel
       final bytesList = excel.encode()!;
       final bytes = Uint8List.fromList(bytesList);
@@ -974,18 +987,17 @@ class ExportService {
     }
   }
 
-  // Helper para escapar valores CSV
-  // Formatear período de manera legible
-  String _formatearPeriodoLegible(String periodoInfo, DateTime fechaInicio, DateTime fechaFin) {
-    final mesNombre = DateFormat('MMMM', 'es_ES').format(fechaInicio);
-    if (periodoInfo.contains('-')) {
-      // Es semana: "05-09_01_2025" -> "Semana del 05 al 09 de Enero 2025"
-      final partes = periodoInfo.split('_');
-      return 'Semana del ${partes[0]} de $mesNombre ${fechaInicio.year}';
-    } else {
-      // Es mes: "01_2025" -> "Mes de Enero 2025"
-      return 'Mes de $mesNombre ${fechaInicio.year}';
-    }
+  // Formatear período de manera legible, usando las fechas seleccionadas
+  // Ejemplo: "del 23 de febrero de 2026 al 2 de marzo de 2026"
+  String _formatearPeriodoLegible(
+    String periodoInfo,
+    DateTime fechaInicio,
+    DateTime fechaFin,
+  ) {
+    final formato = DateFormat('d \'de\' MMMM \'de\' yyyy', 'es_ES');
+    final inicioStr = formato.format(fechaInicio);
+    final finStr = formato.format(fechaFin);
+    return 'del $inicioStr al $finStr';
   }
 
   String _escapeCsv(String value) {
@@ -1170,6 +1182,33 @@ class ExportService {
         TextCellValue(docente['docenteNombre'] ?? 'N/A'),
         TextCellValue('${docente['cantidad']}'),
       ]);
+    }
+
+    // Ajustar ancho de columnas de la hoja de estadísticas
+    _autoFitColumns(sheet, 2);
+  }
+
+  /// Ajusta el ancho de las columnas de una hoja Excel según el contenido.
+  /// [columnCount] es el número de columnas que queremos ajustar (por ejemplo, headers.length).
+  void _autoFitColumns(Sheet sheet, int columnCount) {
+    // Recorrer cada columna y calcular el texto más largo
+    for (var col = 0; col < columnCount; col++) {
+      int maxLength = 0;
+
+      for (var row in sheet.rows) {
+        if (col >= row.length) continue;
+        final cell = row[col];
+        if (cell == null) continue;
+        final value = cell.value;
+        final text = value?.toString() ?? '';
+        if (text.length > maxLength) {
+          maxLength = text.length;
+        }
+      }
+
+      // Factor para convertir caracteres aproximados a ancho de columna
+      final width = (maxLength + 2).toDouble();
+      sheet.setColumnWidth(col, width);
     }
   }
 

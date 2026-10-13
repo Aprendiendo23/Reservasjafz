@@ -7,7 +7,7 @@ import '../../services/reserva_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/export_service.dart';
 import '../../utils/responsive.dart';
-import '../../widgets/zoomable_widget.dart';
+import '../../widgets/tabla_auditoria.dart';
 
 class AuditoriaReservasScreen extends StatefulWidget {
   const AuditoriaReservasScreen({super.key});
@@ -17,20 +17,20 @@ class AuditoriaReservasScreen extends StatefulWidget {
 }
 
 class _AuditoriaReservasScreenState extends State<AuditoriaReservasScreen> {
-  // ScrollControllers para sincronizar el scroll horizontal del encabezado y cuerpo
-  final ScrollController _headerScrollController = ScrollController();
-  final ScrollController _bodyScrollController = ScrollController();
-  bool _isSyncingScroll = false;
+  // Filtros por fecha para la auditoría
+  DateTime? _fechaInicio;
+  DateTime? _fechaFin;
+  bool _estaEliminando = false;
+  String _tipoFiltroFecha = 'eliminacion'; // 'creado' o 'eliminacion'
 
-  @override
-  void initState() {
-    super.initState();
-    // Sincronizar scrolls
-    _headerScrollController.addListener(_syncHeaderScroll);
-    _bodyScrollController.addListener(_syncBodyScroll);
-  }
+  // Filtros de texto
+  String _filtroDocente = '';
+  String _filtroRecurso = '';
 
-  // Exportar las reservas de auditoría (incluye activas y eliminadas)
+  /// Fila seleccionada en la tabla (para recuperar con el botón).
+  String? _reservaSeleccionadaId;
+
+  // Exportar las reservas de auditoría (solo eliminadas en pantalla)
   Future<void> _exportarAuditoria(
     BuildContext context,
     List<QueryDocumentSnapshot> reservas,
@@ -106,83 +106,6 @@ class _AuditoriaReservasScreenState extends State<AuditoriaReservasScreen> {
     }
   }
 
-  void _syncHeaderScroll() {
-    if (!_isSyncingScroll && _bodyScrollController.hasClients) {
-      _isSyncingScroll = true;
-      final offset = _headerScrollController.offset;
-      if ((_bodyScrollController.offset - offset).abs() > 1.0) {
-        _bodyScrollController.jumpTo(offset);
-      }
-      _isSyncingScroll = false;
-    }
-  }
-
-  void _syncBodyScroll() {
-    if (!_isSyncingScroll && _headerScrollController.hasClients) {
-      _isSyncingScroll = true;
-      final offset = _bodyScrollController.offset;
-      if ((_headerScrollController.offset - offset).abs() > 1.0) {
-        _headerScrollController.jumpTo(offset);
-      }
-      _isSyncingScroll = false;
-    }
-  }
-
-  @override
-  void dispose() {
-    _headerScrollController.removeListener(_syncHeaderScroll);
-    _bodyScrollController.removeListener(_syncBodyScroll);
-    _headerScrollController.dispose();
-    _bodyScrollController.dispose();
-    super.dispose();
-  }
-
-  // Obtener anchos de columnas responsive
-  Map<int, TableColumnWidth> _getColumnWidths(BuildContext context) {
-    final isMobile = Responsive.isMobile(context);
-    final isTablet = Responsive.isTablet(context);
-    final screenWidth = MediaQuery.of(context).size.width;
-    
-    if (isMobile) {
-      // Móvil - anchos mínimos para 7 columnas
-      return {
-        0: FixedColumnWidth((screenWidth * 0.20).clamp(90.0, double.infinity)), // Maestro Solicitante
-        1: FixedColumnWidth((screenWidth * 0.18).clamp(80.0, double.infinity)), // Recurso
-        2: FixedColumnWidth((screenWidth * 0.22).clamp(120.0, double.infinity)), // Fecha Solicitud
-        3: FixedColumnWidth((screenWidth * 0.22).clamp(120.0, double.infinity)), // Fecha de Uso
-        4: FixedColumnWidth((screenWidth * 0.22).clamp(120.0, double.infinity)), // Fecha Eliminación
-        5: FixedColumnWidth((screenWidth * 0.18).clamp(90.0, double.infinity)),  // Horario
-        6: FixedColumnWidth((screenWidth * 0.18).clamp(80.0, double.infinity)),  // Estado
-      };
-    } else if (isTablet) {
-      return {
-        0: FixedColumnWidth(170), // Maestro Solicitante
-        1: FixedColumnWidth(140), // Recurso
-        2: FixedColumnWidth(150), // Fecha Solicitud
-        3: FixedColumnWidth(150), // Fecha de Uso
-        4: FixedColumnWidth(150), // Fecha Eliminación
-        5: FixedColumnWidth(130), // Horario
-        6: FixedColumnWidth(110), // Estado
-      };
-    } else {
-      // Desktop/Web - ocupar todo el ancho disponible (7 columnas)
-      final padding = Responsive.isMobile(context) || Responsive.isTablet(context)
-          ? Responsive.padding(context)
-          : const EdgeInsets.symmetric(horizontal: 4, vertical: 8);
-      final availableWidth = screenWidth - (padding.horizontal * 2) - 20; // 20px para bordes y scrollbar
-      // Distribuir proporcionalmente el ancho entre las 7 columnas con anchos mínimos adecuados
-      return {
-        0: FixedColumnWidth((availableWidth * 0.16).clamp(160.0, double.infinity)), // Maestro Solicitante
-        1: FixedColumnWidth((availableWidth * 0.16).clamp(150.0, double.infinity)), // Recurso
-        2: FixedColumnWidth((availableWidth * 0.16).clamp(170.0, double.infinity)), // Fecha Solicitud
-        3: FixedColumnWidth((availableWidth * 0.16).clamp(170.0, double.infinity)), // Fecha de Uso
-        4: FixedColumnWidth((availableWidth * 0.16).clamp(150.0, double.infinity)), // Fecha Eliminación
-        5: FixedColumnWidth((availableWidth * 0.14).clamp(130.0, double.infinity)), // Horario
-        6: FixedColumnWidth((availableWidth * 0.08).clamp(100.0, double.infinity)), // Estado
-      };
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final reservaService = Provider.of<ReservaService>(context);
@@ -203,20 +126,16 @@ class _AuditoriaReservasScreenState extends State<AuditoriaReservasScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.info_outline),
-            tooltip: 'Vista de auditoría - Incluye reservas eliminadas',
+            tooltip: 'Solo reservas eliminadas — recuperar o borrar definitivamente',
             onPressed: () {
               showDialog(
                 context: context,
                 builder: (context) => AlertDialog(
                   title: const Text('Auditoría de Reservas'),
                   content: const Text(
-                    'Esta vista muestra TODAS las reservas, incluyendo las eliminadas.\n\n'
-                    'Las reservas eliminadas se marcan en rojo y muestran:\n'
-                    '• Quién eliminó la reserva (Admin o Docente)\n'
-                    '• Nombre del usuario que eliminó\n'
-                    '• Fecha de eliminación\n\n'
-                    'Las reservas eliminadas no son visibles para los usuarios normales.\n\n'
-                    'Esto permite mantener un registro completo para auditoría.',
+                    'Aquí solo se listan las reservas ELIMINADAS (no las activas).\n\n'
+                    'Puedes recuperar una reserva con el botón verde si el horario sigue libre.\n\n'
+                    'También puedes borrarlas definitivamente o exportar el listado.',
                   ),
                   actions: [
                     TextButton(
@@ -278,374 +197,711 @@ class _AuditoriaReservasScreenState extends State<AuditoriaReservasScreen> {
           }
 
           final reservas = snapshot.data!.docs;
-          final reservasActivas = reservas.where((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            return data['eliminada'] != true;
-          }).toList();
-          final reservasEliminadas = reservas.where((doc) {
+          // Solo reservas eliminadas en esta pantalla
+          final soloEliminadas = reservas.where((doc) {
             final data = doc.data() as Map<String, dynamic>;
             return data['eliminada'] == true;
           }).toList();
 
-          final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+          // Aplicar filtros
+          List<QueryDocumentSnapshot> reservasFiltradas = soloEliminadas;
+          
+          // Filtro por fecha
+          if (_fechaInicio != null || _fechaFin != null) {
+            reservasFiltradas = reservasFiltradas.where((doc) {
+              final data = doc.data() as Map<String, dynamic>;
+              Timestamp? timestamp;
+              
+              if (_tipoFiltroFecha == 'eliminacion') {
+                timestamp = data['fechaEliminacion'] as Timestamp?;
+                if (timestamp == null) return false; // Solo mostrar eliminadas si se filtra por eliminación
+              } else {
+                timestamp = data['creado'] as Timestamp?;
+              }
+              
+              if (timestamp == null) return false;
+              final fecha = timestamp.toDate();
+              
+              if (_fechaInicio != null && fecha.isBefore(_fechaInicio!)) return false;
+              if (_fechaFin != null && fecha.isAfter(_fechaFin!.add(const Duration(days: 1)))) return false;
+              
+              return true;
+            }).toList();
+          }
+          
+          // Filtro por docente
+          if (_filtroDocente.isNotEmpty) {
+            final filtro = _filtroDocente.toLowerCase();
+            reservasFiltradas = reservasFiltradas.where((doc) {
+              final data = doc.data() as Map<String, dynamic>;
+              final docente = (data['docente'] ?? data['usuarioNombre'] ?? '').toString().toLowerCase();
+              return docente.contains(filtro);
+            }).toList();
+          }
+          
+          // Filtro por recurso
+          if (_filtroRecurso.isNotEmpty) {
+            final filtro = _filtroRecurso.toLowerCase();
+            reservasFiltradas = reservasFiltradas.where((doc) {
+              final data = doc.data() as Map<String, dynamic>;
+              final recurso = (data['recursoNombre'] ?? '').toString().toLowerCase();
+              return recurso.toLowerCase().contains(filtro);
+            }).toList();
+          }
+          
+          final totalEliminadasFiltradas = reservasFiltradas.length;
 
-          return Column(
-            mainAxisSize: MainAxisSize.max,
-            children: [
-              // Estadísticas
-              Padding(
-                padding: isLandscape
-                    ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)
-                    : Responsive.padding(context),
-                child: Row(
+          return OrientationBuilder(
+            builder: (context, orientation) {
+              final isLandscape = orientation == Orientation.landscape;
+              
+              if (orientation == Orientation.portrait) {
+                return Column(
                   children: [
-                    Expanded(
-                      child: Card(
-                        elevation: 2,
-                        color: Colors.green.shade50,
-                        child: Padding(
-                          padding: EdgeInsets.all(isLandscape ? 12.0 : 16.0),
-                          child: Column(
-                            children: [
-                              Text(
-                                '${reservasActivas.length}',
-                                style: TextStyle(
-                                  fontSize: isLandscape ? 24 : 32,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.green.shade700,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Reservas Activas',
-                                style: TextStyle(
-                                  fontSize: isLandscape ? 11 : 12,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                    // Solo listado de eliminadas: una tarjeta con el total filtrado
+                    Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: Responsive.isMobile(context) ? 12 : 16,
+                        vertical: Responsive.isMobile(context) ? 8 : 12,
                       ),
-                    ),
-                    SizedBox(width: isLandscape ? 8 : 16),
-                    Expanded(
                       child: Card(
                         elevation: 2,
                         color: Colors.red.shade50,
                         child: Padding(
-                          padding: EdgeInsets.all(isLandscape ? 12.0 : 16.0),
-                          child: Column(
+                          padding: EdgeInsets.all(Responsive.isMobile(context) ? 12.0 : 16.0),
+                          child: Row(
                             children: [
-                              Text(
-                                '${reservasEliminadas.length}',
-                                style: TextStyle(
-                                  fontSize: isLandscape ? 24 : 32,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.red.shade700,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Reservas Eliminadas',
-                                style: TextStyle(
-                                  fontSize: isLandscape ? 11 : 12,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // Botones de exportación (usa los mismos datos que la tabla)
-              Padding(
-                padding: isLandscape
-                    ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)
-                    : Responsive.padding(context),
-                child: Wrap(
-                  spacing: 12,
-                  runSpacing: 8,
-                  alignment: WrapAlignment.start,
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: () => _exportarAuditoria(context, reservas, 'PDF'),
-                      icon: const Icon(Icons.picture_as_pdf, color: Colors.white),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
-                      ),
-                      label: const Text('Exportar PDF'),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: () => _exportarAuditoria(context, reservas, 'Excel'),
-                      icon: const Icon(Icons.table_chart, color: Colors.white),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                      ),
-                      label: const Text('Exportar Excel'),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: () => _exportarAuditoria(context, reservas, 'CSV'),
-                      icon: const Icon(Icons.description, color: Colors.white),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                        foregroundColor: Colors.white,
-                      ),
-                      label: const Text('Exportar CSV'),
-                    ),
-                  ],
-                ),
-              ),
-              // Tabla de reservas
-              Expanded(
-                child: Container(
-                  margin: isLandscape
-                      ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)
-                      : Responsive.padding(context),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    border: Border.all(
-                      color: Colors.grey.shade300,
-                      width: 1,
-                    ),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Builder(
-                      builder: (context) {
-                        final columnWidths = _getColumnWidths(context);
-                        double totalWidth = 0;
-                        columnWidths.forEach((index, width) {
-                          if (width is FixedColumnWidth) {
-                            totalWidth += width.value;
-                          }
-                        });
-                        
-                        return ZoomableWidget(
-                          minScale: 0.5,
-                          maxScale: 3.0,
-                          initialScale: 1.0,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Encabezado
-                              Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.blue.shade700,
-                                  borderRadius: const BorderRadius.only(
-                                    topLeft: Radius.circular(8),
-                                    topRight: Radius.circular(8),
-                                  ),
-                                ),
-                                child: SizedBox(
-                                  width: totalWidth,
-                                  child: Table(
-                                    border: TableBorder.all(
-                                      color: Colors.grey.shade300,
-                                      width: 1,
-                                    ),
-                                    columnWidths: columnWidths,
-                                    children: [
-                                      TableRow(
-                                        children: [
-                                          _buildHeaderCell('MAESTRO SOLICITANTE'),
-                                          _buildHeaderCell('RECURSO'),
-                                          _buildHeaderCell('FECHA SOLICITUD'),
-                                          _buildHeaderCell('FECHA DE USO'),
-                                          _buildHeaderCell('FECHA ELIMINACIÓN'),
-                                          _buildHeaderCell('HORARIO'),
-                                          _buildHeaderCell('ESTADO'),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              // Cuerpo de la tabla
-                              SizedBox(
-                                width: totalWidth,
-                                child: Table(
-                                  border: TableBorder.all(
-                                    color: Colors.grey.shade300,
-                                    width: 1,
-                                  ),
-                                  columnWidths: columnWidths,
+                              Icon(Icons.delete_outline, color: Colors.red.shade700, size: 32),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    // Filas de datos
-                                    ...reservas.map((doc) {
-                                      final data = doc.data() as Map<String, dynamic>;
-                                      final creado = (data['creado'] as Timestamp?)?.toDate();
-                                      final eliminada = data['eliminada'] == true;
-                                      final fechaEliminacion = (data['fechaEliminacion'] as Timestamp?)?.toDate();
-                                      final docente = data['docente'] ?? data['usuarioNombre'] ?? 'N/A';
-                                      final recurso = data['recursoNombre'] ?? 'N/A';
-                                      final fechaUso = (data['fechaUso'] as Timestamp?)?.toDate();
-                                      final dia = fechaUso != null 
-                                          ? DateFormat('EEEE, d \'de\' MMMM \'de\' yyyy', 'es_ES').format(fechaUso)
-                                          : (data['dia'] ?? 'N/A');
-                                      final hora = data['hora'] ?? 'N/A';
-                                      
-                                      // Información sobre quién eliminó la reserva
-                                      String infoEliminacion = '';
-                                      if (eliminada) {
-                                        final eliminadoPorAdmin = data['eliminadoPorAdmin'] == true;
-                                        final usuarioEliminacionNombre = data['usuarioEliminacionNombre'] as String?;
-                                        final fechaEliminacionStr = fechaEliminacion != null 
-                                            ? DateFormat('dd/MM/yy').format(fechaEliminacion)
-                                            : '';
-                                        
-                                        if (usuarioEliminacionNombre != null) {
-                                          infoEliminacion = eliminadoPorAdmin 
-                                              ? 'Eliminada por Admin\n$usuarioEliminacionNombre\n$fechaEliminacionStr'
-                                              : 'Eliminada por Docente\n$usuarioEliminacionNombre\n$fechaEliminacionStr';
-                                        } else {
-                                          infoEliminacion = 'Eliminada\n$fechaEliminacionStr';
-                                        }
-                                      }
-
-                                      return TableRow(
-                                        decoration: BoxDecoration(
-                                          color: eliminada
-                                              ? Colors.red.shade50
-                                              : (reservas.indexOf(doc) % 2 == 0
-                                                  ? Colors.white
-                                                  : Colors.grey.shade50),
-                                        ),
-                                        children: [
-                                          _buildDataCell(docente, eliminada),
-                                          _buildDataCell(recurso, eliminada),
-                                          _buildDataCell(
-                                            creado != null
-                                                ? DateFormat('EEEE, d \'de\' MMMM \'de\' yyyy', 'es_ES').format(creado)
-                                                : 'N/A',
-                                            eliminada,
-                                            esFecha: true,
-                                          ),
-                                          _buildDataCell(dia, eliminada, esFecha: true),
-                                          _buildDataCell(
-                                            fechaEliminacion != null
-                                                ? DateFormat('EEEE, d \'de\' MMMM \'de\' yyyy', 'es_ES')
-                                                    .format(fechaEliminacion)
-                                                : '-',
-                                            eliminada,
-                                            esFecha: true,
-                                          ),
-                                          _buildDataCell(hora, eliminada),
-                                          _buildDataCell(
-                                            eliminada
-                                                ? (infoEliminacion.isNotEmpty ? infoEliminacion : 'Eliminada')
-                                                : 'Activa',
-                                            eliminada,
-                                            isEstado: true,
-                                          ),
-                                        ],
-                                      );
-                                    }),
+                                    Text(
+                                      '$totalEliminadasFiltradas',
+                                      style: TextStyle(
+                                        fontSize: Responsive.isMobile(context) ? 24 : 32,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.red.shade700,
+                                      ),
+                                    ),
+                                    Text(
+                                      'Reservas eliminadas (según filtros)',
+                                      style: TextStyle(
+                                        fontSize: Responsive.isMobile(context) ? 12 : 14,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ),
                             ],
                           ),
-                        );
-                      },
+                        ),
+                      ),
+                    ),
+                    // Filtros y botones en un scroll vertical compacto
+                    SingleChildScrollView(
+                      scrollDirection: Axis.vertical,
+                      physics: const ClampingScrollPhysics(),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildFiltros(context, isLandscape, reservasFiltradas),
+                          // Botones de exportación - más compactos
+                          Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: Responsive.isMobile(context) ? 12 : 16,
+                              vertical: Responsive.isMobile(context) ? 4 : 8,
+                            ),
+                            child: Wrap(
+                              spacing: Responsive.isMobile(context) ? 8 : 12,
+                              runSpacing: Responsive.isMobile(context) ? 6 : 8,
+                              alignment: WrapAlignment.start,
+                              children: [
+                                ElevatedButton.icon(
+                                  onPressed: () => _exportarAuditoria(context, reservasFiltradas, 'PDF'),
+                                  icon: Icon(Icons.picture_as_pdf, color: Colors.white, size: Responsive.isMobile(context) ? 18 : 20),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.red,
+                                    foregroundColor: Colors.white,
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: Responsive.isMobile(context) ? 12 : 16,
+                                      vertical: Responsive.isMobile(context) ? 8 : 12,
+                                    ),
+                                  ),
+                                  label: Text('Exportar PDF', style: TextStyle(fontSize: Responsive.isMobile(context) ? 12 : 14)),
+                                ),
+                                ElevatedButton.icon(
+                                  onPressed: () => _exportarAuditoria(context, reservasFiltradas, 'Excel'),
+                                  icon: Icon(Icons.table_chart, color: Colors.white, size: Responsive.isMobile(context) ? 18 : 20),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    foregroundColor: Colors.white,
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: Responsive.isMobile(context) ? 12 : 16,
+                                      vertical: Responsive.isMobile(context) ? 8 : 12,
+                                    ),
+                                  ),
+                                  label: Text('Exportar Excel', style: TextStyle(fontSize: Responsive.isMobile(context) ? 12 : 14)),
+                                ),
+                                ElevatedButton.icon(
+                                  onPressed: () => _exportarAuditoria(context, reservasFiltradas, 'CSV'),
+                                  icon: Icon(Icons.description, color: Colors.white, size: Responsive.isMobile(context) ? 18 : 20),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.blue,
+                                    foregroundColor: Colors.white,
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: Responsive.isMobile(context) ? 12 : 16,
+                                      vertical: Responsive.isMobile(context) ? 8 : 12,
+                                    ),
+                                  ),
+                                  label: Text('Exportar CSV', style: TextStyle(fontSize: Responsive.isMobile(context) ? 12 : 14)),
+                                ),
+                                ElevatedButton.icon(
+                                  onPressed: _reservaSeleccionadaId == null
+                                      ? null
+                                      : () => _recuperarReserva(context, _reservaSeleccionadaId!),
+                                  icon: Icon(Icons.restore, color: Colors.white, size: Responsive.isMobile(context) ? 18 : 20),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.teal.shade700,
+                                    foregroundColor: Colors.white,
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: Responsive.isMobile(context) ? 12 : 16,
+                                      vertical: Responsive.isMobile(context) ? 8 : 12,
+                                    ),
+                                  ),
+                                  label: Text(
+                                    'Recuperar selección',
+                                    style: TextStyle(fontSize: Responsive.isMobile(context) ? 12 : 14),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Padding(
+                            padding: EdgeInsets.only(
+                              left: Responsive.isMobile(context) ? 12 : 16,
+                              right: Responsive.isMobile(context) ? 12 : 16,
+                              top: 4,
+                            ),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'Toca una fila para seleccionarla (azul). Vuelve a tocar la misma fila para quitar la selección.',
+                                style: TextStyle(
+                                  fontSize: Responsive.isMobile(context) ? 11 : 13,
+                                  color: Colors.grey.shade700,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Tabla - ocupa el resto del espacio disponible con menos padding
+                    Expanded(
+                      child: Container(
+                        margin: EdgeInsets.symmetric(
+                          horizontal: Responsive.isMobile(context) ? 8 : 12,
+                          vertical: Responsive.isMobile(context) ? 4 : 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          border: Border.all(
+                            color: Colors.grey.shade300,
+                            width: 1,
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: TablaAuditoria(
+                            reservas: reservasFiltradas,
+                            filaSeleccionadaId: _reservaSeleccionadaId,
+                            onFilaSeleccionada: (id) {
+                              setState(() {
+                                if (_reservaSeleccionadaId == id) {
+                                  _reservaSeleccionadaId = null;
+                                } else {
+                                  _reservaSeleccionadaId = id;
+                                }
+                              });
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Pie de página - más compacto
+                    Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: Responsive.isMobile(context) ? 12 : 16,
+                        vertical: Responsive.isMobile(context) ? 8 : 12,
+                      ),
+                      child: Text(
+                        'Total (filtrado): $totalEliminadasFiltradas reserva(s) eliminada(s)',
+                        style: TextStyle(
+                          fontSize: Responsive.isMobile(context) ? 11 : 14,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              }
+
+              // Modo landscape
+              return Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    child: Card(
+                      elevation: 2,
+                      color: Colors.red.shade50,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_outline, color: Colors.red.shade700, size: 22),
+                            const SizedBox(width: 8),
+                            Text(
+                              '$totalEliminadasFiltradas eliminadas (filtradas)',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.red.shade900,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
-              // Pie de página
-              Padding(
-                padding: isLandscape
-                    ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)
-                    : Responsive.padding(context),
-                child: Text(
-                  'Total: ${reservas.length} reservas (${reservasActivas.length} activas, ${reservasEliminadas.length} eliminadas)',
-                  style: TextStyle(
-                    fontSize: isLandscape ? 11 : 14,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.grey.shade700,
+                  // Filtros y botones en un scroll horizontal compacto
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    physics: const ClampingScrollPhysics(),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildFiltros(context, isLandscape, reservasFiltradas),
+                          // Botones de exportación - más compactos
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 4,
+                            alignment: WrapAlignment.start,
+                            children: [
+                              ElevatedButton.icon(
+                                onPressed: () => _exportarAuditoria(context, reservasFiltradas, 'PDF'),
+                                icon: const Icon(Icons.picture_as_pdf, color: Colors.white, size: 16),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.red,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                ),
+                                label: const Text('Exportar PDF', style: TextStyle(fontSize: 11)),
+                              ),
+                              ElevatedButton.icon(
+                                onPressed: () => _exportarAuditoria(context, reservasFiltradas, 'Excel'),
+                                icon: const Icon(Icons.table_chart, color: Colors.white, size: 16),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.green,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                ),
+                                label: const Text('Exportar Excel', style: TextStyle(fontSize: 11)),
+                              ),
+                              ElevatedButton.icon(
+                                onPressed: () => _exportarAuditoria(context, reservasFiltradas, 'CSV'),
+                                icon: const Icon(Icons.description, color: Colors.white, size: 16),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.blue,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                ),
+                                label: const Text('Exportar CSV', style: TextStyle(fontSize: 11)),
+                              ),
+                              ElevatedButton.icon(
+                                onPressed: _reservaSeleccionadaId == null
+                                    ? null
+                                    : () => _recuperarReserva(context, _reservaSeleccionadaId!),
+                                icon: const Icon(Icons.restore, color: Colors.white, size: 16),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.teal.shade700,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                ),
+                                label: const Text('Recuperar selección', style: TextStyle(fontSize: 11)),
+                              ),
+                            ],
+                          ),
+                          const Padding(
+                            padding: EdgeInsets.only(top: 4),
+                            child: Text(
+                              'Toca una fila para seleccionarla; «Recuperar selección» restaura esa reserva.',
+                              style: TextStyle(fontSize: 9, color: Colors.grey, fontStyle: FontStyle.italic),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-              ),
-            ],
+                  // Tabla - ocupa el resto del espacio disponible
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          border: Border.all(
+                            color: Colors.grey.shade300,
+                            width: 1,
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: TablaAuditoria(
+                            reservas: reservasFiltradas,
+                            filaSeleccionadaId: _reservaSeleccionadaId,
+                            onFilaSeleccionada: (id) {
+                              setState(() {
+                                if (_reservaSeleccionadaId == id) {
+                                  _reservaSeleccionadaId = null;
+                                } else {
+                                  _reservaSeleccionadaId = id;
+                                }
+                              });
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  // Pie de página - más compacto
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: Text(
+                      'Total (filtrado): $totalEliminadasFiltradas reserva(s) eliminada(s)',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           );
         },
       ),
     );
   }
 
-  Widget _buildHeaderCell(String text) {
-    final isMobile = Responsive.isMobile(context);
-    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
-    final isDesktop = !isMobile && !Responsive.isTablet(context);
-    
-    return TableCell(
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: isLandscape ? 6.0 : (isMobile ? 8.0 : (isDesktop ? 12.0 : 12.0)),
-          vertical: isLandscape ? 8.0 : (isMobile ? 10.0 : (isDesktop ? 24.0 : 12.0)),
-        ),
-        decoration: BoxDecoration(
-          color: Colors.blue.shade900,
-        ),
-        child: Text(
-          text,
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: isLandscape ? 8.0 : (isMobile ? 9.0 : (isDesktop ? 18.0 : 13.0)),
-            height: isLandscape ? 1.1 : (isDesktop ? 1.3 : 1.2),
+  Widget _buildFiltros(BuildContext context, bool isLandscape, List<QueryDocumentSnapshot> reservasFiltradas) {
+    return Padding(
+      padding: isLandscape
+          ? const EdgeInsets.symmetric(horizontal: 8, vertical: 2)
+          : EdgeInsets.symmetric(
+              horizontal: Responsive.isMobile(context) ? 12 : 16,
+              vertical: Responsive.isMobile(context) ? 4 : 8,
+            ),
+      child: Wrap(
+        spacing: Responsive.isMobile(context) ? 8 : 12,
+        runSpacing: Responsive.isMobile(context) ? 6 : 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          // Selector de tipo de fecha para el filtro
+          DropdownButton<String>(
+            value: _tipoFiltroFecha,
+            items: const [
+              DropdownMenuItem(
+                value: 'eliminacion',
+                child: Text('Fecha de eliminación (solo eliminadas)'),
+              ),
+              DropdownMenuItem(
+                value: 'creado',
+                child: Text('Fecha de solicitud/creación'),
+              ),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                _tipoFiltroFecha = value;
+              });
+            },
           ),
-          textAlign: TextAlign.center,
-          maxLines: isLandscape ? 1 : (isDesktop ? null : 2),
-          overflow: TextOverflow.visible,
-          softWrap: true,
-        ),
+          OutlinedButton.icon(
+            onPressed: () => _seleccionarFechaInicio(context),
+            icon: const Icon(Icons.date_range),
+            label: Text(
+              _fechaInicio != null
+                  ? 'Desde: ${DateFormat('dd/MM/yy').format(_fechaInicio!)}'
+                  : 'Fecha desde',
+            ),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => _seleccionarFechaFin(context),
+            icon: const Icon(Icons.date_range),
+            label: Text(
+              _fechaFin != null
+                  ? 'Hasta: ${DateFormat('dd/MM/yy').format(_fechaFin!)}'
+                  : 'Fecha hasta',
+            ),
+          ),
+          // Filtro por docente
+          SizedBox(
+            width: Responsive.isMobile(context) ? 180 : 220,
+            child: TextField(
+              decoration: InputDecoration(
+                labelText: 'Buscar por docente',
+                prefixIcon: const Icon(Icons.person_search),
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: Responsive.isMobile(context) ? 8 : 12,
+                  vertical: Responsive.isMobile(context) ? 8 : 12,
+                ),
+              ),
+              style: TextStyle(fontSize: Responsive.isMobile(context) ? 12 : 14),
+              onChanged: (value) {
+                setState(() {
+                  _filtroDocente = value;
+                });
+              },
+            ),
+          ),
+          // Filtro por recurso
+          SizedBox(
+            width: Responsive.isMobile(context) ? 180 : 220,
+            child: TextField(
+              decoration: InputDecoration(
+                labelText: 'Buscar por recurso',
+                prefixIcon: const Icon(Icons.computer),
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: Responsive.isMobile(context) ? 8 : 12,
+                  vertical: Responsive.isMobile(context) ? 8 : 12,
+                ),
+              ),
+              style: TextStyle(fontSize: Responsive.isMobile(context) ? 12 : 14),
+              onChanged: (value) {
+                setState(() {
+                  _filtroRecurso = value;
+                });
+              },
+            ),
+          ),
+          if (_fechaInicio != null || _fechaFin != null)
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _fechaInicio = null;
+                  _fechaFin = null;
+                });
+              },
+              child: const Text('Limpiar filtro de fechas'),
+            ),
+          const SizedBox(width: 8),
+          ElevatedButton.icon(
+            onPressed: _estaEliminando
+                ? null
+                : () => _confirmarEliminacionPermanente(
+                      context,
+                      reservasFiltradas,
+                      Provider.of<ReservaService>(context, listen: false),
+                    ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade700,
+              foregroundColor: Colors.white,
+            ),
+            icon: const Icon(Icons.delete_forever),
+            label: Text(_estaEliminando
+                ? 'Eliminando...'
+                : 'Eliminar permanente (eliminadas filtradas)'),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildDataCell(String text, bool eliminada, {bool isEstado = false, bool esFecha = false}) {
-    final isMobile = Responsive.isMobile(context);
-    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
-    final isDesktop = !isMobile && !Responsive.isTablet(context);
-    final baseFontSize = isLandscape 
-        ? (esFecha ? 7.0 : 8.0) 
-        : (isMobile 
-            ? (esFecha ? 8.0 : 9.0) 
-            : (isDesktop 
-                ? (esFecha ? 18.0 : 18.0) 
-                : (esFecha ? 11.0 : 12.0)));
-    final padding = isLandscape ? 4.0 : (isMobile ? 6.0 : (isDesktop ? 12.0 : 10.0));
-    
-    return TableCell(
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: padding,
-          vertical: isLandscape ? 6.0 : (isDesktop ? 20.0 : 10.0),
+  Future<void> _seleccionarFechaInicio(BuildContext context) async {
+    final fecha = await showDatePicker(
+      context: context,
+      initialDate: _fechaInicio ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2055, 12, 31),
+      locale: const Locale('es', 'ES'),
+    );
+    if (fecha != null) {
+      setState(() {
+        _fechaInicio = fecha;
+      });
+    }
+  }
+
+  Future<void> _seleccionarFechaFin(BuildContext context) async {
+    final fecha = await showDatePicker(
+      context: context,
+      initialDate: _fechaFin ?? (_fechaInicio ?? DateTime.now()),
+      firstDate: _fechaInicio ?? DateTime(2020),
+      lastDate: DateTime(2055, 12, 31),
+      locale: const Locale('es', 'ES'),
+    );
+    if (fecha != null) {
+      setState(() {
+        _fechaFin = fecha;
+      });
+    }
+  }
+
+  Future<void> _confirmarEliminacionPermanente(
+    BuildContext context,
+    List<QueryDocumentSnapshot> reservasFiltradas,
+    ReservaService reservaService,
+  ) async {
+    final reservasEliminadas = reservasFiltradas.where((doc) {
+      final data = doc.data() as Map<String, dynamic>;
+      return data['eliminada'] == true;
+    }).toList();
+
+    if (reservasEliminadas.isEmpty) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Sin reservas eliminadas'),
+          content: const Text('No hay reservas eliminadas en los resultados filtrados.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
         ),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: baseFontSize,
-            color: eliminada ? Colors.red.shade700 : Colors.black87,
-            decoration: eliminada ? TextDecoration.lineThrough : null,
-            fontStyle: eliminada ? FontStyle.italic : null,
-            fontWeight: isEstado && eliminada ? FontWeight.bold : FontWeight.normal,
-            height: isLandscape ? 1.1 : (isDesktop ? 1.4 : 1.2),
+      );
+      return;
+    }
+
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirmar eliminación permanente'),
+        content: Text(
+          '¿Estás seguro de que deseas eliminar permanentemente ${reservasEliminadas.length} reserva(s)?\n\n'
+          'Esta acción NO se puede deshacer.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
           ),
-          textAlign: TextAlign.center,
-          maxLines: esFecha ? (isLandscape ? 2 : (isDesktop ? null : 3)) : (isLandscape ? 1 : (isDesktop ? null : 2)),
-          overflow: TextOverflow.visible,
-          softWrap: true,
-        ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Eliminar permanentemente'),
+          ),
+        ],
       ),
     );
+
+    if (confirmar != true) return;
+
+    setState(() {
+      _estaEliminando = true;
+    });
+
+    try {
+      for (final doc in reservasEliminadas) {
+        await reservaService.eliminarReservaPermanente(doc.id);
+      }
+
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Eliminación exitosa'),
+            content: Text('Se eliminaron permanentemente ${reservasEliminadas.length} reserva(s).'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Error'),
+            content: Text('Error al eliminar: $e'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _estaEliminando = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _recuperarReserva(BuildContext context, String reservaId) async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Recuperar reserva'),
+        content: const Text(
+          '¿Restaurar esta reserva? Volverá a estar activa y visible como el resto '
+          'si el recurso y horario siguen libres.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Recuperar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmar != true || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final reservaService = Provider.of<ReservaService>(context, listen: false);
+    try {
+      await reservaService.recuperarReserva(reservaId);
+      if (!mounted) return;
+      setState(() => _reservaSeleccionadaId = null);
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Reserva recuperada correctamente'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('$e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 }

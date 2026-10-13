@@ -8,6 +8,7 @@ import '../services/auth_service.dart';
 import '../services/export_service.dart';
 import '../utils/responsive.dart';
 import 'zoomable_widget.dart';
+import 'tabla_disponibilidad.dart'; // Para usar NombreUsuarioActualizado
 
 class TablaReservas extends StatefulWidget {
   final String? recursoID;
@@ -199,19 +200,6 @@ class _TablaReservasState extends State<TablaReservas> {
           return true;
         }).toList();
 
-        if (!esAdmin) {
-          final ahora = DateTime.now();
-          final inicioHoy = DateTime(ahora.year, ahora.month, ahora.day);
-          
-          reservas = reservas.where((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            final fechaUso = (data['fechaUso'] as Timestamp?)?.toDate();
-            if (fechaUso == null) return false;
-            final fechaUsoDia = DateTime(fechaUso.year, fechaUso.month, fechaUso.day);
-            return fechaUsoDia.isAfter(inicioHoy.subtract(const Duration(days: 1)));
-          }).toList();
-        }
-
         final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
         
         return Column(
@@ -336,9 +324,7 @@ class _TablaReservasState extends State<TablaReservas> {
                           Icon(Icons.info_outline, size: 16, color: Colors.blue.shade700),
                           const SizedBox(width: 6),
                           Text(
-                            esAdmin
-                                ? 'Todas las reservas visibles'
-                                : 'Reservas futuras visibles',
+                            'Todas las reservas visibles',
                             style: TextStyle(
                               fontSize: 12,
                               color: Colors.blue.shade700,
@@ -499,7 +485,8 @@ class _TablaReservasState extends State<TablaReservas> {
     return reservas.map((doc) {
       final data = doc.data() as Map<String, dynamic>;
       final creado = (data['creado'] as Timestamp?)?.toDate();
-      final docente = data['docente'] ?? data['usuarioNombre'] ?? 'N/A';
+      final docenteNombreReserva = data['docente'] ?? data['usuarioNombre'] ?? 'N/A';
+      final usuarioID = data['usuarioID'] as String?;
       final recurso = data['recursoNombre'] ?? 'N/A';
       final fechaUso = (data['fechaUso'] as Timestamp?)?.toDate();
       final dia = fechaUso != null 
@@ -520,8 +507,13 @@ class _TablaReservasState extends State<TablaReservas> {
                   : Colors.grey.shade100),
         ),
         children: [
-          _buildDataCell(
-            eliminada ? '$docente (ELIMINADA)' : docente,
+          _buildDataCellWithWidget(
+            child: eliminada 
+                ? Text('${docenteNombreReserva} (ELIMINADA)')
+                : NombreUsuarioActualizado(
+                    usuarioID: usuarioID,
+                    nombreReserva: docenteNombreReserva,
+                  ),
             eliminada: eliminada,
           ),
           _buildDataCell(recurso, eliminada: eliminada),
@@ -606,6 +598,33 @@ class _TablaReservasState extends State<TablaReservas> {
           maxLines: esFecha ? (isLandscape ? 2 : (isDesktop ? null : 3)) : (isLandscape ? 1 : (isDesktop ? null : 2)),
           overflow: TextOverflow.visible,
           softWrap: true,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDataCellWithWidget({required Widget child, bool eliminada = false}) {
+    final isMobile = Responsive.isMobile(context);
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    final isDesktop = !isMobile && !Responsive.isTablet(context);
+    final padding = isLandscape ? 4.0 : (isMobile ? 6.0 : (isDesktop ? 12.0 : 10.0));
+    
+    return TableCell(
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: padding,
+          vertical: isLandscape ? 6.0 : (isDesktop ? 20.0 : 10.0),
+        ),
+        child: DefaultTextStyle(
+          style: TextStyle(
+            fontSize: isLandscape ? 8.0 : (isMobile ? 9.0 : (isDesktop ? 18.0 : 12.0)),
+            color: eliminada ? Colors.red.shade700 : Colors.black87,
+            decoration: eliminada ? TextDecoration.lineThrough : null,
+            fontStyle: eliminada ? FontStyle.italic : null,
+            fontWeight: eliminada ? FontWeight.normal : FontWeight.w400,
+            height: isLandscape ? 1.1 : (isDesktop ? 1.4 : 1.2),
+          ),
+          child: child,
         ),
       ),
     );

@@ -1,0 +1,251 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================
+    // FUNCIONES AUXILIARES
+    // ============================================
+    
+    // Verificar si el usuario está autenticado
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Verificar si el usuario existe en la colección usuarios
+    function userExists() {
+      return exists(/databases/$(database)/documents/usuarios/$(request.auth.uid));
+    }
+    
+    // Obtener el rol del usuario actual (solo si existe)
+    function getUserRole() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol;
+    }
+    
+    // Verificar si el usuario es ADMINISTRADOR
+    function isAdmin() {
+      return isAuthenticated() && 
+             userExists() &&
+             getUserRole() == 'admin';
+    }
+    
+    // Verificar si el usuario es DOCENTE
+    function isDocente() {
+      return isAuthenticated() && 
+             (userExists() && getUserRole() == 'docente');
+    }
+    
+    // Verificar si el usuario es el propietario del documento
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // ============================================
+    // COLECCIÓN: usuarios
+    // ============================================
+    match /usuarios/{userId} {
+      // LECTURA:
+      // - Cualquier usuario autenticado puede leer cualquier usuario
+      //   (necesario para verificar roles y mostrar información básica)
+      allow read: if isAuthenticated();
+      
+      // CREACIÓN:
+      // - Cualquier usuario autenticado puede crear su propio documento cuando se registra
+      //   (permite creación automática del documento al registrarse)
+      // - Admins pueden crear cualquier documento de usuario
+      // - Permite crear incluso si el usuario no existe aún (para registro inicial)
+      allow create: if isAuthenticated() && 
+                       (isOwner(userId) || isAdmin() || !userExists());
+      
+      // ACTUALIZACIÓN:
+      // - Docentes: Solo pueden actualizar su propio documento (perfil)
+      // - Admins: Pueden actualizar cualquier documento de usuario
+      // - Permite actualizar si el usuario es el propietario (incluso si no existe aún)
+      allow update: if isAuthenticated() && 
+                       (isOwner(userId) || isAdmin() || !userExists());
+      
+      // ELIMINACIÓN:
+      // - Solo admins pueden eliminar usuarios
+      allow delete: if isAdmin();
+    }
+    
+    // ============================================
+    // COLECCIÓN: recursos
+    // ============================================
+    match /recursos/{recursoId} {
+      // LECTURA:
+      // - Cualquier usuario autenticado puede leer recursos
+      //   (permite que docentes vean disponibilidad incluso si su documento aún no existe)
+      allow read: if isAuthenticated();
+      
+      // CREACIÓN, ACTUALIZACIÓN, ELIMINACIÓN:
+      // - Solo admins pueden gestionar recursos (CRUD completo)
+      allow create, update, delete: if isAdmin();
+    }
+    
+    // ============================================
+    // COLECCIÓN: reservas
+    // ============================================
+    match /reservas/{reservaId} {
+      // LECTURA:
+      // - Cualquier usuario autenticado puede leer reservas (cronograma compartido)
+      allow read: if isAuthenticated();
+      
+      // CREACIÓN:
+      // - Cualquier usuario autenticado puede crear reservas propias
+      //   (verifica que el usuarioID/usuarioId coincida con el usuario autenticado)
+      // - Permite crear incluso si el usuario no existe en la colección usuarios
+      allow create: if isAuthenticated() && 
+                       (request.resource.data.usuarioID == request.auth.uid ||
+                        request.resource.data.usuarioId == request.auth.uid ||
+                        isAdmin());
+      
+      // ACTUALIZACIÓN:
+      // - Docentes: Solo pueden actualizar sus propias reservas
+      // - Admins: Pueden actualizar CUALQUIER reserva
+      // - Permite actualizar si el usuario es el propietario (incluso si no existe en usuarios)
+      allow update: if isAuthenticated() && 
+                       (isAdmin() || 
+                        request.auth.uid == resource.data.usuarioID ||
+                        request.auth.uid == resource.data.usuarioId);
+      
+      // ELIMINACIÓN:
+      // - Docentes: Solo pueden eliminar sus propias reservas
+      // - Admins: Pueden eliminar CUALQUIER reserva
+      // - Permite eliminar si el usuario es el propietario (incluso si no existe en usuarios)
+      allow delete: if isAuthenticated() && 
+                       (isAdmin() || 
+                        request.auth.uid == resource.data.usuarioID ||
+                        request.auth.uid == resource.data.usuarioId);
+    }
+
+    // ============================================
+    // COLECCIÓN: logs (solo administración)
+    // ============================================
+    match /logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    // ============================================
+    // COLECCIÓN: notificaciones
+    // ============================================
+    match /notificaciones/{notifId} {
+      // LECTURA:
+      // - Los usuarios pueden leer sus propias notificaciones
+      // - Los admins pueden leer todas las notificaciones
+      allow read: if isAuthenticated() &&
+                    (isAdmin() ||
+                     request.auth.uid == resource.data.usuarioID);
+      
+      // CREACIÓN:
+      // - Cualquier usuario autenticado puede crear notificaciones
+      //   (necesario para el sistema de notificaciones cuando se crea una reserva)
+      // - Los usuarios pueden crear notificaciones para sí mismos
+      // - Los admins pueden crear notificaciones para cualquier usuario
+      allow create: if isAuthenticated() &&
+                      (isAdmin() ||
+                       request.resource.data.usuarioID == request.auth.uid ||
+                       // Permitir crear notificaciones para otros usuarios cuando el tipo es 'nueva_reserva'
+                       // (esto permite que el sistema notifique a todos cuando un docente crea una reserva)
+                       request.resource.data.tipo == 'nueva_reserva');
+      
+      // ACTUALIZACIÓN:
+      // - Los usuarios pueden marcar sus propias notificaciones como leídas
+      //   (solo pueden actualizar los campos 'leida' y 'fechaLeida')
+      // - Los admins pueden actualizar cualquier notificación
+      allow update: if isAuthenticated() &&
+                      (isAdmin() ||
+                       (request.auth.uid == resource.data.usuarioID &&
+                        // Verificar que solo se actualicen los campos permitidos
+                        request.resource.data.keys().hasAll(['usuarioID', 'titulo', 'mensaje', 'tipo', 'creado']) &&
+                        request.resource.data.usuarioID == resource.data.usuarioID &&
+                        request.resource.data.titulo == resource.data.titulo &&
+                        request.resource.data.mensaje == resource.data.mensaje &&
+                        request.resource.data.tipo == resource.data.tipo));
+      
+      // ELIMINACIÓN:
+      // - Solo admins pueden eliminar notificaciones
+      allow delete: if isAdmin();
+    }
+    
+    // ============================================
+    // COLECCIÓN: grados
+    // ============================================
+    match /grados/{gradoId} {
+      // LECTURA:
+      // - Cualquier usuario autenticado puede leer grados
+      //   (necesario para que docentes vean la lista al crear reservas)
+      allow read: if isAuthenticated();
+      
+      // CREACIÓN, ACTUALIZACIÓN, ELIMINACIÓN:
+      // - Solo admins pueden gestionar grados/aulas (CRUD completo)
+      allow create, update, delete: if isAdmin();
+    }
+    
+    // ============================================
+    // COLECCIÓN: asignaturas
+    // ============================================
+    match /asignaturas/{asignaturaId} {
+      // LECTURA:
+      // - Cualquier usuario autenticado puede leer asignaturas
+      //   (necesario para que docentes vean la lista al crear reservas)
+      allow read: if isAuthenticated();
+      
+      // CREACIÓN, ACTUALIZACIÓN, ELIMINACIÓN:
+      // - Solo admins pueden gestionar asignaturas (CRUD completo)
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ============================================
+    // COLECCIÓN: fcm_tokens (tokens de Firebase Cloud Messaging)
+    // ============================================
+    match /fcm_tokens/{tokenId} {
+      // LECTURA:
+      // - Los usuarios pueden leer su propio token
+      // - Los admins pueden leer todos los tokens
+      allow read: if isAuthenticated() &&
+                    (isAdmin() ||
+                     request.auth.uid == resource.data.usuarioID);
+      
+      // CREACIÓN, ACTUALIZACIÓN:
+      // - Los usuarios pueden crear/actualizar su propio token
+      // - Los admins pueden gestionar cualquier token
+      allow create, update: if isAuthenticated() &&
+                              (isAdmin() ||
+                               request.resource.data.usuarioID == request.auth.uid);
+      
+      // ELIMINACIÓN:
+      // - Los usuarios pueden eliminar su propio token
+      // - Los admins pueden eliminar cualquier token
+      allow delete: if isAuthenticated() &&
+                      (isAdmin() ||
+                       request.auth.uid == resource.data.usuarioID);
+    }
+
+    // ============================================
+    // COLECCIÓN: push_notifications_queue (cola de notificaciones push)
+    // ============================================
+    match /push_notifications_queue/{queueId} {
+      // LECTURA:
+      // - Solo admins pueden leer la cola
+      allow read: if isAdmin();
+      
+      // CREACIÓN:
+      // - Cualquier usuario autenticado puede crear entradas en la cola
+      //   (necesario para que el sistema encole notificaciones push)
+      allow create: if isAuthenticated();
+      
+      // ACTUALIZACIÓN, ELIMINACIÓN:
+      // - Solo admins pueden actualizar/eliminar (normalmente Cloud Functions)
+      allow update, delete: if isAdmin();
+    }
+    
+    // ============================================
+    // REGLA POR DEFECTO: Denegar todo lo demás
+    // ============================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

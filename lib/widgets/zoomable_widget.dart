@@ -55,17 +55,11 @@ class _ZoomableWidgetState extends State<ZoomableWidget> {
             transformationController: _transformationController,
             minScale: widget.minScale,
             maxScale: widget.maxScale,
-            panEnabled: true, // Habilitar desplazamiento con el dedo
-            scaleEnabled: true, // Habilitar zoom con pellizco
-            boundaryMargin: EdgeInsets.zero, // Sin márgenes para permitir desplazamiento completo
-            constrained: false, // Permitir desplazamiento libre cuando hay zoom
-            clipBehavior: Clip.none, // No recortar para permitir ver todo el contenido
-            onInteractionUpdate: (details) {
-              // Actualizar la escala actual si es necesario
-              setState(() {
-                _scale = _transformationController.value.getMaxScaleOnAxis();
-              });
-            },
+            panEnabled: true, // Desplazamiento con el dedo (scroll horizontal y vertical)
+            scaleEnabled: true, // Zoom con pellizco
+            boundaryMargin: EdgeInsets.zero, // Sin márgenes extra para evitar sensación de flotante
+            constrained: false, // Contenido puede ser más grande que el viewport para permitir scroll tras el zoom
+            clipBehavior: Clip.hardEdge, // Recortar contenido que se salga del viewport
             child: widget.child,
           ),
         );

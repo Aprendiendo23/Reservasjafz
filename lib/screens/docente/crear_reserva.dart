@@ -139,6 +139,7 @@ class _CrearReservaScreenState extends State<CrearReservaScreen> {
   bool _isLoading = false;
   Map<String, Map<String, dynamic>>? _disponibilidadFecha;
   bool _cargandoDisponibilidad = false;
+  bool _reservaRecienCreada = false; // Bandera para evitar mostrar mensajes después de crear reserva
 
   @override
   void initState() {
@@ -652,15 +653,54 @@ class _CrearReservaScreenState extends State<CrearReservaScreen> {
     try {
       final reservaService = Provider.of<ReservaService>(context, listen: false);
       final user = FirebaseAuth.instance.currentUser;
-      // Excluir las reservas del usuario actual para evitar que vea conflictos con sus propias reservas
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final esAdmin = authService.isAdmin;
+      
+      // Determinar qué usuarioID excluir:
+      // - Si es admin y hay un docente seleccionado, necesitamos excluir el usuarioID del docente
+      // - Si no es admin o no hay docente seleccionado, excluir el usuarioID del usuario actual
+      String? usuarioIDExcluir = user?.uid;
+      
+      if (esAdmin && _docente != null) {
+        // Si es admin, intentar obtener el usuarioID del docente seleccionado
+        try {
+          final usuarioService = Provider.of<UsuarioService>(context, listen: false);
+          final docentesSnapshot = await usuarioService.getUsuariosPorRol('docente').first;
+          
+          String normalizarNombre(String nombre) {
+            return nombre
+                .toLowerCase()
+                .replaceAll(' ', '')
+                .replaceAll('_', '')
+                .replaceAll('-', '')
+                .trim();
+          }
+          
+          final nombreDocenteNormalizado = normalizarNombre(_docente!);
+          for (var doc in docentesSnapshot.docs) {
+            final data = doc.data() as Map<String, dynamic>;
+            final nombre = data['nombre'] as String?;
+            if (nombre != null && normalizarNombre(nombre) == nombreDocenteNormalizado) {
+              usuarioIDExcluir = doc.id;
+              break;
+            }
+          }
+        } catch (e) {
+          print('⚠️ Error al buscar usuarioID del docente para exclusión: $e');
+          // Si hay error, usar el usuarioID del admin como fallback
+        }
+      }
+      
+      // Excluir las reservas del usuario correspondiente para evitar que vea conflictos con sus propias reservas
       final resultado = await reservaService.verificarDisponibilidadPorFechaConDetalles(
         _fechaUso!,
         _hora!,
         recursoIDFinal!,
-        excluirUsuarioID: user?.uid, // Excluir reservas del usuario actual
+        excluirUsuarioID: usuarioIDExcluir, // Excluir reservas del usuario correspondiente
       );
 
-      if (!resultado['disponible'] && mounted) {
+      // No mostrar el mensaje si la reserva se acaba de crear exitosamente
+      if (!resultado['disponible'] && mounted && !_reservaRecienCreada) {
         final reservaOcupada = resultado['reservaOcupada'] as Map<String, dynamic>?;
         if (reservaOcupada != null) {
           final docenteNombre = reservaOcupada['usuarioNombre'] ?? 'Docente';
@@ -763,16 +803,55 @@ class _CrearReservaScreenState extends State<CrearReservaScreen> {
       // Obtener el día de la semana de la fecha seleccionada
       final diaSemana = _getDiaSemana(_fechaUso!);
       
+      // Obtener el usuarioID del docente seleccionado si es admin (necesario para la verificación)
+      String? docenteUsuarioIDParaVerificacion;
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final esAdmin = authService.isAdmin;
+      
+      if (esAdmin && _docente != null) {
+        // Buscar el usuarioID del docente seleccionado para excluirlo de la verificación
+        try {
+          final docentesSnapshot = await usuarioService.getUsuariosPorRol('docente').first;
+          
+          String normalizarNombre(String nombre) {
+            return nombre
+                .toLowerCase()
+                .replaceAll(' ', '')
+                .replaceAll('_', '')
+                .replaceAll('-', '')
+                .trim();
+          }
+          
+          final nombreDocenteNormalizado = normalizarNombre(_docente!);
+          for (var doc in docentesSnapshot.docs) {
+            final data = doc.data() as Map<String, dynamic>;
+            final nombre = data['nombre'] as String?;
+            if (nombre != null && normalizarNombre(nombre) == nombreDocenteNormalizado) {
+              docenteUsuarioIDParaVerificacion = doc.id;
+              break;
+            }
+          }
+        } catch (e) {
+          print('⚠️ Error al buscar usuarioID del docente para verificación: $e');
+        }
+      }
+      
       // Verificar disponibilidad por fecha específica (más preciso)
       // Usar try-catch para manejar errores de Firestore
       Map<String, dynamic> resultadoDisponibilidad;
       try {
         final user = FirebaseAuth.instance.currentUser;
+        // Si es admin y se encontró el usuarioID del docente, excluir ese usuarioID
+        // De lo contrario, excluir el usuarioID del usuario actual
+        final usuarioIDExcluir = (esAdmin && docenteUsuarioIDParaVerificacion != null)
+            ? docenteUsuarioIDParaVerificacion
+            : user?.uid;
+            
         resultadoDisponibilidad = await reservaService.verificarDisponibilidadPorFechaConDetalles(
           _fechaUso!,
           _hora!,
           recursoIDFinal,
-          excluirUsuarioID: user?.uid, // Excluir reservas del usuario actual
+          excluirUsuarioID: usuarioIDExcluir, // Excluir reservas del usuario correspondiente
         );
       } catch (e) {
         print('Error al verificar disponibilidad: $e');
@@ -806,6 +885,76 @@ class _CrearReservaScreenState extends State<CrearReservaScreen> {
         throw mensaje;
       }
 
+      // Obtener el usuarioID del docente seleccionado si es admin
+      String? docenteUsuarioID;
+      
+      if (esAdmin && _docente != null) {
+        // Buscar el usuarioID del docente seleccionado
+        try {
+          print('🔍 Buscando usuarioID para docente: $_docente');
+          final docentesSnapshot = await usuarioService.getUsuariosPorRol('docente').first;
+          print('📊 Total de docentes encontrados: ${docentesSnapshot.docs.length}');
+          
+          // Función para normalizar nombres
+          String normalizarNombre(String nombre) {
+            return nombre
+                .toLowerCase()
+                .replaceAll(' ', '')
+                .replaceAll('_', '')
+                .replaceAll('-', '')
+                .trim();
+          }
+          
+          final nombreDocenteNormalizado = normalizarNombre(_docente!);
+          print('🔍 Nombre docente normalizado: "$nombreDocenteNormalizado"');
+          
+          for (var doc in docentesSnapshot.docs) {
+            final data = doc.data() as Map<String, dynamic>;
+            final nombre = data['nombre'] as String?;
+            final email = data['email'] as String?;
+            
+            if (nombre != null) {
+              final nombreNormalizado = normalizarNombre(nombre);
+              print('   - Comparando: "$nombreNormalizado" (${doc.id})');
+              
+              if (nombreNormalizado == nombreDocenteNormalizado) {
+                docenteUsuarioID = doc.id;
+                print('✅ UsuarioID del docente seleccionado encontrado: $docenteUsuarioID para "$_docente" (nombre en Firestore: "$nombre", email: $email)');
+                break;
+              }
+            }
+          }
+          
+          if (docenteUsuarioID == null) {
+            print('⚠️ No se encontró usuarioID para el docente: $_docente');
+            print('   Intentando buscar por email...');
+            // Intentar buscar por email si el nombre no coincide
+            final user = FirebaseAuth.instance.currentUser;
+            if (user != null && user.email != null) {
+              // Buscar en el mapeo de emails
+              final emailDocente = _emailANombre.entries.firstWhere(
+                (entry) => normalizarNombre(entry.value) == nombreDocenteNormalizado,
+                orElse: () => MapEntry('', ''),
+              );
+              if (emailDocente.key.isNotEmpty) {
+                // Buscar usuario por email
+                for (var doc in docentesSnapshot.docs) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  final email = data['email'] as String?;
+                  if (email != null && email.toLowerCase() == emailDocente.key.toLowerCase()) {
+                    docenteUsuarioID = doc.id;
+                    print('✅ UsuarioID encontrado por email: $docenteUsuarioID');
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          print('⚠️ Error al buscar usuarioID del docente: $e');
+        }
+      }
+
       // Crear la reserva
       await reservaService.crearReserva({
         'recursoID': recursoIDFinal,
@@ -823,6 +972,8 @@ class _CrearReservaScreenState extends State<CrearReservaScreen> {
             _nombreUsuarioActual ?? 
             FirebaseAuth.instance.currentUser?.displayName ?? 
             'Usuario',
+        // Si es admin y se encontró el usuarioID del docente, usarlo
+        'docenteUsuarioID': docenteUsuarioID, // UsuarioID del docente seleccionado (solo cuando es admin)
         'estado': 'activa',
         'eliminada': false, // Para auditoría
       });
@@ -838,12 +989,21 @@ class _CrearReservaScreenState extends State<CrearReservaScreen> {
       print('   - Grado: ${_grado!}');
 
       if (mounted) {
+        // Marcar que la reserva se acaba de crear para evitar mensajes de conflicto
+        setState(() {
+          _reservaRecienCreada = true;
+        });
+        
         // Mostrar mensaje flotante centrado "Solicitud realizada" y esperar a que se cierre
         await _mostrarMensajeExito();
         
         if (mounted) {
           // Limpiar todos los campos del formulario después de cerrar el diálogo
           _limpiarFormulario();
+          // Resetear la bandera después de limpiar
+          setState(() {
+            _reservaRecienCreada = false;
+          });
         }
       }
     } catch (e) {

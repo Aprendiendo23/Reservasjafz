@@ -49,12 +49,36 @@ class _LoginAdminScreenState extends State<LoginAdminScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString()),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 4),
-          ),
+        String errorMessage = e.toString();
+        final lower = errorMessage.toLowerCase();
+        if (lower.contains('client is offline') ||
+            lower.contains('cloud_firestore/unavailable') ||
+            lower.contains('[cloud_firestore/unavailable]') ||
+            lower.contains('unavailable') ||
+            lower.contains('offline') ||
+            lower.contains('network') ||
+            lower.contains('connection') ||
+            lower.contains('internet')) {
+          errorMessage =
+              'Sin conexión a Internet. Revisa tu red y vuelve a intentar.';
+        }
+
+        await showDialog<void>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text('Error de autenticación'),
+              content: Text(
+                errorMessage,
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Aceptar'),
+                ),
+              ],
+            );
+          },
         );
       }
     } finally {

@@ -83,8 +83,56 @@ class _PerfilDocenteScreenState extends State<PerfilDocenteScreen> {
             return Center(child: Text('Error: ${snapshot.error}'));
           }
 
+          // Si el usuario no existe en Firestore, crearlo automáticamente
           if (!snapshot.hasData || !snapshot.data!.exists) {
-            return const Center(child: Text('Usuario no encontrado'));
+            // Crear el usuario automáticamente
+            WidgetsBinding.instance.addPostFrameCallback((_) async {
+              if (mounted && user != null) {
+                try {
+                  // Obtener nombre por defecto basado en el email
+                  String? nombrePorDefecto = user.email != null 
+                      ? _obtenerNombrePorDefecto(user.email!) 
+                      : null;
+                  
+                  // Determinar el nombre a usar
+                  String nombre = nombrePorDefecto ?? 
+                                  user.displayName ?? 
+                                  (user.email?.split('@')[0] ?? 'Usuario');
+                  
+                  // Crear el usuario en Firestore
+                  await usuarioService.guardarUsuario(user.uid, {
+                    'nombre': nombre,
+                    'email': user.email ?? '',
+                    'rol': 'docente',
+                    'foto': user.photoURL ?? '',
+                    'usuario': user.email ?? '',
+                  });
+                  
+                  // El StreamBuilder se actualizará automáticamente
+                } catch (e) {
+                  print('Error al crear usuario automáticamente: $e');
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error al crear perfil: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              }
+            });
+            
+            return const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Creando perfil...'),
+                ],
+              ),
+            );
           }
 
           final usuarioData = snapshot.data!.data() as Map<String, dynamic>?;

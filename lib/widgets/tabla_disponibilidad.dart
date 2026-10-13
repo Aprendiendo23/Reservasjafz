@@ -8,6 +8,86 @@ import '../services/auth_service.dart';
 import '../utils/responsive.dart';
 import 'zoomable_widget.dart';
 
+/// Widget que muestra el nombre actualizado del usuario desde Firestore
+/// Consulta la colección 'usuarios' usando el usuarioID de la reserva
+class NombreUsuarioActualizado extends StatelessWidget {
+  final String? usuarioID;
+  final String? nombreReserva; // Nombre guardado en la reserva (fallback)
+  final TextStyle? style;
+  final int? maxLines;
+  final TextOverflow? overflow;
+  final bool? softWrap;
+
+  const NombreUsuarioActualizado({
+    super.key,
+    required this.usuarioID,
+    this.nombreReserva,
+    this.style,
+    this.maxLines,
+    this.overflow,
+    this.softWrap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Si no hay usuarioID, usar el nombre de la reserva como fallback
+    if (usuarioID == null || usuarioID!.isEmpty) {
+      return Text(
+        nombreReserva ?? 'Docente',
+        style: style,
+        maxLines: maxLines,
+        overflow: overflow,
+        softWrap: softWrap,
+      );
+    }
+
+    // Consultar el nombre actualizado desde Firestore
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('usuarios')
+          .doc(usuarioID)
+          .snapshots(),
+      builder: (context, snapshot) {
+        String nombreMostrar = nombreReserva ?? 'Docente';
+
+        if (snapshot.hasData && snapshot.data!.exists) {
+          final data = snapshot.data!.data() as Map<String, dynamic>?;
+          final nombreActualizado = data?['nombre'] as String?;
+          final reservaPareceEmail =
+              nombreReserva != null && nombreReserva!.contains('@');
+
+          // Caso 1: la reserva guarda un nombre "bonito" (no email) elegido por admin → respetar ese nombre.
+          if (nombreReserva != null &&
+              nombreReserva!.isNotEmpty &&
+              !reservaPareceEmail) {
+            nombreMostrar = nombreReserva!;
+          }
+          // Caso 2: la reserva guarda un correo u otro valor feo → usar el nombre del perfil si existe.
+          else if (nombreActualizado != null && nombreActualizado.isNotEmpty) {
+            nombreMostrar = nombreActualizado;
+          }
+          // Caso 3: no hay nombre en perfil, usar lo que venga en la reserva (aunque sea email).
+          else if (nombreReserva != null && nombreReserva!.isNotEmpty) {
+            nombreMostrar = nombreReserva!;
+          }
+        } else {
+          // Si no se encuentra el usuario en Firestore, usar el nombreReserva
+          // Esto pasa cuando el docente seleccionado no está registrado en Firestore
+          nombreMostrar = nombreReserva ?? 'Docente';
+        }
+
+        return Text(
+          nombreMostrar,
+          style: style,
+          maxLines: maxLines,
+          overflow: overflow,
+          softWrap: softWrap,
+        );
+      },
+    );
+  }
+}
+
 class TablaDisponibilidad extends StatefulWidget {
   final String recursoID;
   final String recursoNombre;
@@ -789,10 +869,9 @@ class _TablaDisponibilidadState extends State<TablaDisponibilidad> {
                             ),
                             SizedBox(width: MediaQuery.of(context).orientation == Orientation.landscape ? 2.0 : 4.0),
                             Expanded(
-                              child: Text(
-                                reserva['docente'] ?? 
-                                reserva['usuarioNombre'] ?? 
-                                'Docente',
+                              child: NombreUsuarioActualizado(
+                                usuarioID: reserva['usuarioID'] as String?,
+                                nombreReserva: reserva['docente'] ?? reserva['usuarioNombre'] as String?,
                                 style: TextStyle(
                                   fontSize: MediaQuery.of(context).orientation == Orientation.landscape
                                     ? 8.0
